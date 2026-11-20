@@ -1,0 +1,93 @@
+// nabi-content: check and bundle a content repository for the Nabi sites.
+//
+//   nabi-content check <dir> [filter]
+//       run every ```nabi block under <dir> with $NABI (default nabi) and
+//       compare every ```text check=<file> block with `nabi check <file>`;
+//       exit 1 if one fails or its output differs
+//   nabi-content bundle <dir> --repo <r> --branch <b> --sha <s>
+//                      --toolchain <v> --out <file>
+//       write the pages under <dir> to one NABION bundle
+
+mod bundle;
+
+use std::env;
+use std::fs;
+use std::path::Path;
+use std::process;
+use snippets::Snippet;
+
+fn usage() {
+    eprintln("usage: nabi-content check <dir> [filter]");
+    eprintln("       nabi-content bundle <dir> --repo <r> --branch <b> --sha <s> --toolchain <v> --out <file>");
+    process::exit(2);
+}
+
+fn run_check(dir: str, filter: str) throws {
+    let files = try bundle::collect(dir);
+    let all: List<Snippet> = List::new();
+    let snips: List<Snippet> = List::new();
+    for (path, text) in files.iter() {
+        if !path.ends_with(".md") { continue; }
+        let found = snippets::extract(path, text);
+        all.extend(found);
+        if path.contains(filter) { snips.extend(found); }
+    }
+    let tool = try env::var("NABI") catch _ { "nabi" };
+    // One work directory per content repo: each run prunes its own.
+    let repo = (try Path::new(dir).canonicalize()).file_name() ?? "root";
+    let work = env::temp_dir().as_str() + "/nabi-content-snippets/" + repo;
+    let bad = try snippets::check_all(tool, dir, work, snips, all);
+    let run = 0usize;
+    let diag = 0usize;
+    for s in snips {
+        if s.mode == "diag" { diag += 1; } else if s.mode != "norun" { run += 1; }
+    }
+    for b in bad { eprint(f"code block: {b}"); }
+    println(f"{run} code blocks and {diag} diagnostics checked ({snips.len() - run - diag} norun), {bad.len()} failing");
+    if bad.len() > 0 { process::exit(1); }
+}
+
+fn run_bundle(dir: str, args: List<str>) throws {
+    let opts: Dict<str, str> = Dict::new();
+    let k = 0usize;
+    while k + 1 < args.len() {
+        if !args[k].starts_with("--") { usage(); }
+        opts.insert(args[k][2:], args[k + 1]);
+        k += 2;
+    }
+    if k != args.len() { usage(); }
+    for need in ["repo", "branch", "sha", "toolchain", "out"] {
+        if !opts.contains_key(need) {
+            eprintln(f"error: missing `--{need} <value>`");
+            usage();
+        }
+    }
+    let b = bundle::Bundle {
+        repo: opts["repo"],
+        branch: opts["branch"],
+        sha: opts["sha"],
+        toolchain: opts["toolchain"],
+        files: try bundle::collect(dir),
+    };
+    try bundle::write(b, opts["out"]);
+    println(f"{b.files.len()} files from {b.repo}@{b.branch} -> {opts["out"]}");
+}
+
+fn main() throws {
+    let args = env::args();
+    if args.len() < 3 { usage(); }
+    let dir = args[2];
+    if !fs::exists(dir) {
+        eprintln(f"error: `{dir}` does not exist");
+        process::exit(2);
+    }
+    if args[1] == "check" {
+        try run_check(dir, if args.len() > 3 { args[3] } else { "" });
+    } else if args[1] == "bundle" {
+        let rest: List<str> = List::new();
+        for i in 3..args.len() { rest.push(args[i]); }
+        try run_bundle(dir, rest);
+    } else {
+        usage();
+    }
+}

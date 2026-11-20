@@ -1,0 +1,39 @@
+# Every commit of a pull request is signed off (CONTRIBUTING.md, Sign your
+# work).
+name: CI / DCO sign-off
+
+on:
+  pull_request:
+  merge_group:
+
+permissions:
+  contents: read
+
+jobs:
+  dco:
+    name: DCO
+    uses: nabi-lang/.github/.github/workflows/reusable-dco.yml@v1.0.0
+
+  # The one required check (rulesets/main.json): passes when every job
+  # passed or was skipped.
+  ci-gate:
+    name: CI gate
+    needs: [dco]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check the job results
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "results: $RESULTS"
+          for r in $RESULTS; do
+            case $r in
+              success | skipped) ;;
+              *)
+                echo "::error::a gate job did not pass: $r"
+                exit 1
+                ;;
+            esac
+          done

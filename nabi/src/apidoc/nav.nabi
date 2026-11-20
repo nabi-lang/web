@@ -1,0 +1,309 @@
+//! The navigation of an API page, as the docs site's standard library
+//! pages, the registry's package docs and `nabi doc` all show it: the
+//! breadcrumb over the content, the sidebar (the package, then one
+//! section each for its module tree, the page's items by kind and its
+//! dependencies) and "On this page".
+//! `nabi doc` writes the same markup; the `nav_markup` test here and its
+//! twin in nabic_tools hold both to one fixture.
+//!
+//! The sidebar lists the page's items; "On this page" lists only its
+//! sections and the methods of its types, so the two never repeat each
+//! other.
+
+use pkg::apidoc::{Item, Module};
+use pkg::chrome::esc;
+
+/// A package in the sidebar's head or its dependencies.
+pub struct Package {
+    pub name: str;
+    pub version: str = "";
+    /// From the page; `""` when it has no docs here.
+    pub href: str = "";
+    /// The page is this package's root (the head only).
+    pub here: bool = false;
+}
+
+/// One heading of a page: level 2 a section (`Structs`), 3 an item
+/// (`struct.Qr`), 4 a member (`Qr.solve`, text ending in its name).
+pub struct Head {
+    pub level: usize;
+    pub id: str;
+    pub text: str;
+}
+
+/// Items of a page by kind, in the sidebar's order (re-exports are
+/// listed on the page only).
+pub const KINDS: [(str, str); 8] = [
+    ("struct", "Structs"), ("enum", "Enums"), ("trait", "Traits"), ("type", "Type aliases"),
+    ("fn", "Functions"), ("const", "Constants"), ("static", "Statics"), ("impl", "Implementations"),
+];
+
+/// A method group in "On this page" with more members than this starts
+/// folded.
+pub const FOLD: usize = 15usize;
+
+const SEP: str = "<span class=\"sep\" aria-hidden=\"true\">\u{203A}</span>";
+
+/// `Package` for a package's root module, else `Module`.
+pub fn kind_of(m: Module, root: str) -> str { if m.path == root { "Package" } else { "Module" } }
+
+/// The way from package `root` down to module `m`: (label, href) for
+/// the root (labelled by its full path) and each module below it; href
+/// `""` where there is no page.
+pub fn trail(mods: List<Module>, m: Module, root: str, href: fn(Module) -> str) -> List<(str, str)> {
+    let out: List<(str, str)> = List::new();
+    let at = root;
+    out.push((root, page_href(mods, root, href)));
+    if m.path.len() <= root.len() { return out; }
+    for seg in m.path[root.len() + 2:].split("::") {
+        at = at + "::" + seg;
+        out.push((seg, page_href(mods, at, href)));
+    }
+    out
+}
+
+fn page_href(mods: List<Module>, path: str, href: fn(Module) -> str) -> str {
+    for q in mods {
+        if q.path == path { return href(q); }
+    }
+    ""
+}
+
+/// The breadcrumb: the page's `kind` (`Package`, `Module`) and `segs`
+/// (trail), the last one the page itself.
+pub fn crumb(kind: str, segs: List<(str, str)>) -> str {
+    let out = StrBuf::new();
+    out.push_str(f"<nav class=\"crumb api-crumb\" aria-label=\"Breadcrumb\"><span class=\"api-kind\">{esc(kind)}</span>");
+    for k in 0..segs.len() {
+        let (label, href) = segs[k];
+        if k > 0 { out.push_str(SEP); }
+        let last = k + 1 == segs.len();
+        if href.is_empty() {
+            out.push_str(if last { f"<span class=\"here\" aria-current=\"page\">{esc(label)}</span>" } else { f"<span>{esc(label)}</span>" });
+        } else if last {
+            out.push_str(f"<a class=\"here\" href=\"{esc(href)}\" aria-current=\"page\">{esc(label)}</a>");
+        } else {
+            out.push_str(f"<a href=\"{esc(href)}\">{esc(label)}</a>");
+        }
+    }
+    out.push_str("</nav>");
+    out.to_str()
+}
+
+/// The sidebar: the package `head` (current on its root page), then a
+/// section each for the module `tree`, the page's `items` and, under
+/// `label`, the packages `deps` (its dependencies; the other tiers of
+/// the standard library).
+pub fn side(head: Package, tree: str, items: str, label: str, deps: List<Package>) -> str {
+    let out = StrBuf::new();
+    out.push_str("<div class=\"api-nav\">");
+    let ver = if head.version.is_empty() { "" } else { f"<small>{esc(head.version)}</small>" };
+    let cur = if head.here { " aria-current=\"page\"" } else { "" };
+    out.push_str(f"<p class=\"api-pkg\"><a href=\"{esc(head.href)}\"{cur}><span>{esc(head.name)}</span>{ver}</a></p>");
+    if !tree.is_empty() { out.push_str(f"<div class=\"api-sec\"><h2 class=\"t-label\">Modules</h2>{tree}</div>"); }
+    out.push_str(items);
+    if deps.len() > 0 {
+        out.push_str(f"<div class=\"api-sec\"><h2 class=\"t-label\">{esc(label)}</h2><ul class=\"api-items api-deps\">");
+        for d in deps {
+            let v = if d.version.is_empty() { "" } else { f"<small>{esc(d.version)}</small>" };
+            out.push_str(if d.href.is_empty() { f"<li><span>{esc(d.name)}{v}</span></li>" } else { f"<li><a href=\"{esc(d.href)}\">{esc(d.name)}{v}</a></li>" });
+        }
+        out.push_str("</ul></div>");
+    }
+    out.push_str("</div>");
+    out.to_str()
+}
+
+/// The modules of package `root` as a tree, by name, its top-level
+/// modules first (the package itself is the sidebar's head), `m`
+/// current: its ancestors and itself open, every other branch folded
+/// behind a toggle that names its number of submodules. `""` when the
+/// package has no module below its root.
+pub fn tree(mods: List<Module>, m: Module, root: str, href: fn(Module) -> str) -> str {
+    let top: Module | none = none;
+    for q in mods {
+        if q.path == root { top = q; }
+    }
+    let r = top ?? { return ""; };
+    let (kids, _) = node_kids(mods, r, m, href);
+    if kids.is_empty() { return ""; }
+    f"<ul class=\"api-tree\">{kids}</ul>"
+}
+
+/// The children of `q` in the tree and how many there are.
+fn node_kids(mods: List<Module>, q: Module, m: Module, href: fn(Module) -> str) -> (str, usize) {
+    let out = StrBuf::new();
+    let n = 0usize;
+    // By name, as `nabi doc` lists them.
+    let names: List<str> = List::new();
+    for c in q.children { names.push(c); }
+    names.sort_by(|a, b| a.cmp(b));
+    for c in names {
+        let p = q.path + "::" + c;
+        for k in mods {
+            if k.path != p { continue; }
+            n += 1;
+            let on = m.path == p || m.path.starts_with(p + "::");
+            let cur = if m.path == p { " aria-current=\"page\"" } else { "" };
+            let (sub, subs) = node_kids(mods, k, m, href);
+            // The toggle names the count; the link's name stays the module's.
+            let ct = if subs == 0 { "" } else { f"<span class=\"ct\" aria-hidden=\"true\">{subs}</span>" };
+            out.push_str(f"<li{if on { " class=\"open\"" } else { "" }}><a href=\"{esc(href(k))}\"{cur}>{esc(c)}{ct}</a>");
+            if subs > 0 {
+                out.push_str(f"<details class=\"tw\"{if on { " open" } else { "" }}><summary><span class=\"sr-only\">{esc(c)}: {subs} submodule{if subs == 1 { "" } else { "s" }}</span></summary><ul>{sub}</ul></details>");
+            }
+            out.push_str("</li>");
+        }
+    }
+    (out.to_str(), n)
+}
+
+/// The items of module `m` by kind (KINDS) and name, each linked by
+/// `href(item, id)`, in a section headed by `m`'s path below package
+/// `root` (`root` on its own page); `here` is the id of the item whose
+/// own page this is, or `""`. `""` when `m` has no items.
+pub fn items(m: Module, root: str, href: fn(Item, str) -> str, here: str) -> str {
+    let out = StrBuf::new();
+    for (kind, label) in KINDS {
+        let its: List<Item> = List::new();
+        for it in (if kind == "impl" { m.impls } else { m.items }) {
+            if it.kind == kind || kind == "impl" { its.push(it); }
+        }
+        if its.len() == 0 { continue; }
+        its.sort_by(|a, b| a.name.cmp(b.name));
+        out.push_str(f"<h3 class=\"api-k\">{label} <span class=\"ct\">{its.len()}</span></h3><ul class=\"api-items\">");
+        for it in its {
+            let id = pkg::apidoc::anchor(it);
+            let name = if kind == "impl" { "impl " + it.name } else { it.name };
+            let cur = if id == here { " aria-current=\"page\"" } else { "" };
+            out.push_str(f"<li><a href=\"{esc(href(it, id))}\"{cur}>{esc(name)}</a></li>");
+        }
+        out.push_str("</ul>");
+    }
+    let body = out.to_str();
+    if body.is_empty() { return ""; }
+    let name = if m.path.starts_with(root + "::") { m.path[root.len() + 2:] } else { m.path };
+    f"<div class=\"api-sec\"><h2 class=\"t-label\">In <code>{esc(name)}</code></h2>{body}</div>"
+}
+
+/// "On this page" of `heads`: the sections, and under each the methods
+/// of its items grouped by item; when there are several groups, one of
+/// more than FOLD starts folded. Items without members are the
+/// sidebar's. `""` for a short page: no methods and fewer than three
+/// sections, which the sidebar's kind headings already show.
+pub fn rail(heads: List<Head>) -> str {
+    // A section (text, no methods, id) or a group (name, methods, "").
+    let rows: List<(str, List<(str, str)>, str)> = List::new();
+    let sections = 0usize;
+    let groups = 0usize;
+    let group = "";
+    let ms: List<(str, str)> = List::new();
+    for h in heads {
+        if h.level > 3 {
+            ms.push((last_name(h.text), h.id));
+            continue;
+        }
+        if ms.len() > 0 {
+            rows.push((group, ms, ""));
+            groups += 1;
+            ms = List::new();
+        }
+        if h.level == 2 {
+            sections += 1;
+            rows.push((h.text, List::new(), h.id));
+        } else {
+            group = if h.text.starts_with("impl ") { h.text } else { last_name(h.text) };
+        }
+    }
+    if ms.len() > 0 {
+        rows.push((group, ms, ""));
+        groups += 1;
+    }
+    if sections < 3 && groups == 0 { return ""; }
+    let out = StrBuf::new();
+    for (text, gm, id) in rows {
+        if gm.len() == 0 {
+            out.push_str(f"<li><a href=\"#{esc(id)}\">{esc(text)}</a></li>");
+        } else {
+            out.push_str(group_html(text, gm, groups > 1 && gm.len() > FOLD));
+        }
+    }
+    out.to_str()
+}
+
+fn last_name(path: str) -> str { if let k: usize = path.rfind("::") { path[k + 2:] } else { path } }
+
+/// One item's methods (name, id) in "On this page", by name.
+fn group_html(group: str, ms: List<(str, str)>, fold: bool) -> str {
+    ms.sort_by(|a, b| a.0.cmp(b.0));
+    let out = StrBuf::new();
+    let open = if fold { "" } else { " open" };
+    out.push_str(f"<li class=\"grp\"><details{open}><summary><code>{esc(group)}</code><span class=\"ct\">{ms.len()}</span></summary><ul>");
+    for (name, id) in ms { out.push_str(f"<li class=\"m\"><a href=\"#{esc(id)}\"><code>{esc(name)}</code></a></li>"); }
+    out.push_str("</ul></details></li>");
+    out.to_str()
+}
+
+/// The fixture `nabi doc`'s twin test checks its markup against.
+#[cfg(test)]
+fn fixture() -> List<Module> {
+    let files: Dict<str, str> = Dict::new();
+    files.insert("lib.nabi", "pub mod factor;\npub mod ops;\n/// Q.\npub struct Qr {}\npub fn lu() {}\npub fn qr() {}\n");
+    files.insert("factor.nabi", "pub mod qr;\npub mod lu;\n");
+    files.insert("factor/qr.nabi", "pub fn householder() {}\n");
+    files.insert("factor/lu.nabi", "pub mod blocked;\n");
+    files.insert("factor/lu/blocked.nabi", "pub fn panel() {}\n");
+    files.insert("ops.nabi", "pub mod scalar;\n");
+    files.insert("ops/scalar.nabi", "pub const ONE: i32 = 1;\n");
+    pkg::apidoc::pages(pkg::apidoc::walk(|p| files.get(p), "lib.nabi", "k", "k/index.html"))
+}
+
+/// The path from page `from` to page `to`, both under one root.
+#[cfg(test)]
+fn rel(from: str, to: str) -> str {
+    let a: List<str> = List::new();
+    for x in from.split("/") { a.push(x); }
+    a.pop();
+    let b: List<str> = List::new();
+    for x in to.split("/") { b.push(x); }
+    let same = 0usize;
+    while same < a.len() && same + 1 < b.len() && a[same] == b[same] { same += 1; }
+    "../".repeat(a.len() - same) + b[same:].to_list().join("/")
+}
+
+#[test]
+fn nav_markup() {
+    let mods = fixture();
+    let qr = mods[2];
+    assert(qr.path == "k::factor::qr" && qr.out == "k/factor/qr.html", qr.path);
+    let href = |q: Module| rel(qr.out, q.out);
+    assert(crumb(kind_of(qr, "k"), trail(mods, qr, "k", href)) == "<nav class=\"crumb api-crumb\" aria-label=\"Breadcrumb\"><span class=\"api-kind\">Module</span><a href=\"../index.html\">k</a><span class=\"sep\" aria-hidden=\"true\">\u{203A}</span><a href=\"../factor.html\">factor</a><span class=\"sep\" aria-hidden=\"true\">\u{203A}</span><a class=\"here\" href=\"qr.html\" aria-current=\"page\">qr</a></nav>", crumb(kind_of(qr, "k"), trail(mods, qr, "k", href)));
+    assert(tree(mods, qr, "k", href) == "<ul class=\"api-tree\"><li class=\"open\"><a href=\"../factor.html\">factor<span class=\"ct\" aria-hidden=\"true\">2</span></a><details class=\"tw\" open><summary><span class=\"sr-only\">factor: 2 submodules</span></summary><ul><li><a href=\"lu.html\">lu<span class=\"ct\" aria-hidden=\"true\">1</span></a><details class=\"tw\"><summary><span class=\"sr-only\">lu: 1 submodule</span></summary><ul><li><a href=\"lu/blocked.html\">blocked</a></li></ul></details></li><li class=\"open\"><a href=\"qr.html\" aria-current=\"page\">qr</a></li></ul></details></li><li><a href=\"../ops.html\">ops<span class=\"ct\" aria-hidden=\"true\">1</span></a><details class=\"tw\"><summary><span class=\"sr-only\">ops: 1 submodule</span></summary><ul><li><a href=\"../ops/scalar.html\">scalar</a></li></ul></details></li></ul>", tree(mods, qr, "k", href));
+    let root = mods[0];
+    let its = items(root, "k", |_it, id| "#" + id, "");
+    assert(its == "<div class=\"api-sec\"><h2 class=\"t-label\">In <code>k</code></h2><h3 class=\"api-k\">Structs <span class=\"ct\">1</span></h3><ul class=\"api-items\"><li><a href=\"#struct.Qr\">Qr</a></li></ul><h3 class=\"api-k\">Functions <span class=\"ct\">2</span></h3><ul class=\"api-items\"><li><a href=\"#fn.lu\">lu</a></li><li><a href=\"#fn.qr\">qr</a></li></ul></div>", its);
+    let qi = items(qr, "k", |_it, id| "#" + id, "");
+    assert(qi == "<div class=\"api-sec\"><h2 class=\"t-label\">In <code>factor::qr</code></h2><h3 class=\"api-k\">Functions <span class=\"ct\">1</span></h3><ul class=\"api-items\"><li><a href=\"#fn.householder\">householder</a></li></ul></div>", qi);
+    let s = side(Package { name: "k", version: "0.1.0", href: "index.html", here: true }, "<ul></ul>", "", "Dependencies", [Package { name: "dep", version: "1.2.0", href: "../dep/index.html" }, Package { name: "gone" }]);
+    assert(s == "<div class=\"api-nav\"><p class=\"api-pkg\"><a href=\"index.html\" aria-current=\"page\"><span>k</span><small>0.1.0</small></a></p><div class=\"api-sec\"><h2 class=\"t-label\">Modules</h2><ul></ul></div><div class=\"api-sec\"><h2 class=\"t-label\">Dependencies</h2><ul class=\"api-items api-deps\"><li><a href=\"../dep/index.html\">dep<small>1.2.0</small></a></li><li><span>gone</span></li></ul></div></div>", s);
+    assert(crumb("Package", trail(mods, root, "k", |q: Module| rel(root.out, q.out))) == "<nav class=\"crumb api-crumb\" aria-label=\"Breadcrumb\"><span class=\"api-kind\">Package</span><a class=\"here\" href=\"index.html\" aria-current=\"page\">k</a></nav>", "root crumb");
+    let top = tree(mods, root, "k", |q: Module| rel(root.out, q.out));
+    assert(top.starts_with("<ul class=\"api-tree\"><li><a href=\"factor.html\">factor<span class=\"ct\" aria-hidden=\"true\">2</span></a>") && !top.contains("aria-current"), top);
+    assert(tree(mods, mods[6], "k", |q: Module| rel(mods[6].out, q.out)).contains("<li class=\"open\"><a href=\"../ops.html\">ops<span class=\"ct\" aria-hidden=\"true\">1</span></a><details class=\"tw\" open>"), "ancestors open");
+    assert(tree([mods[0]], mods[0], "k", href) == "", "no tree for a lone root");
+}
+
+#[test]
+fn rail_rules() {
+    let h = |level: usize, id: str, text: str| Head { level: level, id: id, text: text };
+    assert(rail([h(2, "struct", "Structs"), h(3, "struct.P", "k::P"), h(2, "fn", "Functions"), h(3, "fn.a", "k::a")]) == "", "short page");
+    let r = rail([h(2, "struct", "Structs"), h(3, "struct.Qr", "k::Qr"), h(4, "Qr.solve", "k::Qr::solve"), h(4, "Qr.det", "k::Qr::det"), h(3, "struct.P", "k::P"), h(2, "fn", "Functions"), h(3, "fn.a", "k::a")]);
+    assert(r == "<li><a href=\"#struct\">Structs</a></li><li class=\"grp\"><details open><summary><code>Qr</code><span class=\"ct\">2</span></summary><ul><li class=\"m\"><a href=\"#Qr.det\"><code>det</code></a></li><li class=\"m\"><a href=\"#Qr.solve\"><code>solve</code></a></li></ul></details></li><li><a href=\"#fn\">Functions</a></li>", r);
+    let many: List<Head> = [h(2, "impl", "Implementations"), h(3, "impl.i8", "impl i8")].to_list();
+    for k in 0..16 { many.push(h(4, f"i8.m{k}", f"k::i8::m{k}")); }
+    assert(rail(many).contains("<li class=\"grp\"><details open><summary><code>impl i8</code><span class=\"ct\">16</span>"), "one group stays open");
+    many.push(h(3, "impl.u8", "impl u8"));
+    many.push(h(4, "u8.m", "k::u8::m"));
+    let r2 = rail(many);
+    assert(r2.contains("<li class=\"grp\"><details><summary><code>impl i8</code><span class=\"ct\">16</span>") && r2.contains("<details open><summary><code>impl u8</code>"), r2);
+}

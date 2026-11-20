@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Nabi">
+  <title>Nabi</title>
+  <g stroke-width=".4" stroke-linejoin="round">
+    <path fill="#93356A" stroke="#93356A" d="M23 39 L30 5 L33 15 Z"/>
+    <path fill="#C9518A" stroke="#C9518A" d="M23 39 L33 15 L36 25.1 Z"/>
+    <path fill="#C9518A" stroke="#C9518A" d="M23 39 L44 39 L38.5 49 Z"/>
+    <path fill="#93356A" stroke="#93356A" d="M23 39 L38.5 49 L33 59 Z"/>
+    <path fill="#FBC6D9" stroke="#FBC6D9" d="M23 39 L52 8 L54 18.5 Z"/>
+    <path fill="#C9518A" stroke="#C9518A" d="M23 39 L54 18.5 L56 29 Z"/>
+    <path fill="#EC7FA9" stroke="#EC7FA9" d="M23 39 L56 29 L44 39 Z"/>
+    <path fill="#C9518A" stroke="#C9518A" d="M8 55 L18 41 L23 39 Z"/>
+    <path fill="#93356A" stroke="#93356A" d="M8 55 L23 39 L25 43 Z"/>
+  </g>
+</svg>

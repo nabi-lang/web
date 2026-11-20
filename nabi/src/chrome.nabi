@@ -1,0 +1,281 @@
+//! Markup the Nabi sites share: a page's <head>, the theme controls
+//! theme.js drives, the social links, the bar of Nabi sites, the footer,
+//! and the <head> lines for fonts, icons and theme.js. Hrefs and text are
+//! escaped here; column links come as HTML.
+
+/// HTML-escaped `s`, for text and attribute values.
+pub fn esc(s: str) -> str {
+    s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;")
+}
+
+/// The webfonts (kit::FONTS_DIR, published as fonts/), from the site root: the two Geist files
+/// nabi.css asks for on every page, preloaded so the text does not reflow
+/// when they land, and Pretendard's stylesheet, which only Korean text
+/// uses.
+pub const FONT_FILES: [str; 2] = ["fonts/Geist-Variable.woff2", "fonts/GeistMono-Variable.woff2"];
+pub const PRETENDARD: str = "fonts/pretendard.css";
+
+/// theme.js, blocking: it must run before the first paint. `root` leads
+/// to the site root (`/`, or `../` from a page one level down). Put it
+/// right after `<meta name="theme-color">`.
+pub fn theme_script(root: str) -> str { f"<script src=\"{root}theme.js\"></script>\n" }
+
+/// The font preloads and Pretendard's stylesheet, from `/`.
+pub fn fonts() -> str { fonts_in("/", true) }
+
+/// fonts() from `root` (the same root as nabi.css, so a preload and the
+/// stylesheet's request are one URL); Pretendard's stylesheet only if
+/// the page holds Korean text (`ko`).
+pub fn fonts_in(root: str, ko: bool) -> str {
+    let b = StrBuf::new();
+    for f in FONT_FILES { b.push_str(f"<link rel=\"preload\" href=\"{root}{f}\" as=\"font\" type=\"font/woff2\" crossorigin>\n"); }
+    if ko { b.push_str(f"<link rel=\"stylesheet\" href=\"{root}{PRETENDARD}\">\n"); }
+    b.to_str()
+}
+
+/// The kit's icons (kit.nabi names them), under `root`.
+pub fn icons(root: str) -> str {
+    f"<link rel=\"icon\" href=\"{root}favicon.svg\" type=\"image/svg+xml\">
+<link rel=\"icon\" href=\"{root}favicon.ico\" sizes=\"32x32\">
+<link rel=\"apple-touch-icon\" href=\"{root}apple-touch-icon.png\">
+<link rel=\"manifest\" href=\"{root}site.webmanifest\">
+"
+}
+
+/// A page's `<head>` lines (chrome::head).
+pub struct Head {
+    /// The whole `<title>`, also og:title.
+    pub title: str;
+    /// og:site_name.
+    pub site: str;
+    /// The description, HTML-escaped already.
+    pub desc: str;
+    /// The canonical address; `""`: none.
+    pub url: str = "";
+    /// The og:image (with its `?v=`), its pixel size and its text.
+    pub img: str;
+    pub img_w: i64;
+    pub img_h: i64;
+    pub alt: str;
+    /// Leads to the fonts and icons (`/`, `../`).
+    pub root: str = "/";
+    /// The address of a site file by name (theme.js, nabi.css,
+    /// style.css), with its `?v=`.
+    pub asset: fn(str) -> str;
+    /// Lines after the canonical link (robots, hreflang).
+    pub extra: str = "";
+    /// A Korean page: Pretendard too (fonts_in).
+    pub ko: bool = false;
+}
+
+/// `<head>` from the charset to the icons, theme.js blocking before the
+/// first paint.
+pub fn head(h: Head) -> str {
+    let img = esc(h.img);
+    let alt = esc(h.alt);
+    let canonical = if h.url.is_empty() { "" } else { f"<link rel=\"canonical\" href=\"{esc(h.url)}\">\n" };
+    let og_url = if h.url.is_empty() { "" } else { f"<meta property=\"og:url\" content=\"{esc(h.url)}\">\n" };
+    f"<meta charset=\"utf-8\">
+<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">
+<title>{esc(h.title)}</title>
+<meta name=\"color-scheme\" content=\"light dark\">
+<meta name=\"theme-color\" content=\"#fcfbfb\">
+<script src=\"{(h.asset)("theme.js")}\"></script>
+<meta name=\"description\" content=\"{h.desc}\">
+{canonical}{h.extra}<meta property=\"og:type\" content=\"website\">
+<meta property=\"og:site_name\" content=\"{esc(h.site)}\">
+<meta property=\"og:title\" content=\"{esc(h.title)}\">
+<meta property=\"og:description\" content=\"{h.desc}\">
+{og_url}<meta property=\"og:image\" content=\"{img}\">
+<meta property=\"og:image:type\" content=\"image/png\">
+<meta property=\"og:image:width\" content=\"{h.img_w}\">
+<meta property=\"og:image:height\" content=\"{h.img_h}\">
+<meta property=\"og:image:alt\" content=\"{alt}\">
+<meta name=\"twitter:card\" content=\"summary_large_image\">
+<meta name=\"twitter:image\" content=\"{img}\">
+<meta name=\"twitter:image:alt\" content=\"{alt}\">
+{fonts_in(h.root, h.ko)}<link rel=\"stylesheet\" href=\"{(h.asset)("nabi.css")}\">
+<link rel=\"stylesheet\" href=\"{(h.asset)("style.css")}\">
+{icons(h.root)}"
+}
+
+pub const ICON_THEME: str = "<svg class=\"moon\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" aria-hidden=\"true\"><path d=\"M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z\"/></svg><svg class=\"sun\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" aria-hidden=\"true\"><circle cx=\"12\" cy=\"12\" r=\"4\"/><path d=\"M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4\"/></svg>";
+
+/// The header's theme button. Its name stays "Dark theme" and
+/// aria-pressed says whether it is on; theme.js keeps aria-pressed and
+/// the title (the action) in step.
+pub fn theme_button(ko: bool) -> str {
+    let (label, title) = if ko { ("다크 테마", "다크 테마로 바꾸기") } else { ("Dark theme", "Switch to dark theme") };
+    f"<button class=\"ib theme\" type=\"button\" aria-label=\"{label}\" aria-pressed=\"false\" title=\"{title}\">{ICON_THEME}</button>"
+}
+
+/// The footer's System / Light / Dark switch.
+pub fn theme_seg(ko: bool) -> str {
+    let (lang, group, sys, light, dark) = if ko { ("ko", "테마", "시스템", "라이트", "다크") } else { ("en", "Theme", "System", "Light", "Dark") };
+    f"<span class=\"seg\" role=\"group\" aria-label=\"{group}\" lang=\"{lang}\"><button type=\"button\" data-theme-set=\"auto\" aria-pressed=\"false\">{sys}</button><button type=\"button\" data-theme-set=\"light\" aria-pressed=\"false\">{light}</button><button type=\"button\" data-theme-set=\"dark\" aria-pressed=\"false\">{dark}</button></span>"
+}
+
+/// The project's accounts as icon links (`.social` in nabi.css).
+pub const SOCIAL: str = "<span class=\"social\"><a href=\"https://github.com/nabi-lang\" aria-label=\"GitHub\" title=\"GitHub\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12\"/></svg></a></span>";
+
+/// The Nabi sites, each by its address from the page at hand.
+pub struct Sites {
+    pub home: str;
+    pub docs: str;
+    pub registry: str;
+    pub playground: str;
+    /// `home`, `docs`, `registry` or `playground`: the site the page is on.
+    pub current: str;
+}
+
+/// The bar's links to the Nabi sites, the current one marked.
+pub fn sites_nav(s: Sites) -> str { sites_nav_in(s, false) }
+
+/// sites_nav, in Korean if `ko`.
+pub fn sites_nav_in(s: Sites, ko: bool) -> str {
+    let b = StrBuf::new();
+    b.push_str(if ko { "<nav aria-label=\"Nabi 사이트\">" } else { "<nav aria-label=\"Nabi sites\">" });
+    let names = if ko { ["홈", "문서", "패키지", "플레이그라운드"] } else { ["Home", "Docs", "Packages", "Playground"] };
+    for (key, text, href) in [("home", names[0], s.home), ("docs", names[1], s.docs), ("registry", names[2], s.registry), ("playground", names[3], s.playground)] {
+        let cur = if key == s.current { " aria-current=\"page\"" } else { "" };
+        b.push_str(f"<a href=\"{esc(href)}\"{cur}>{text}</a>");
+    }
+    b.push_str("</nav>");
+    b.to_str()
+}
+
+/// The Nabi sites as header links (`.nav.sites`), the current one marked
+/// like any active header link.
+pub fn header_sites(s: Sites, ko: bool) -> str {
+    sites_nav_in(s, ko).replace("<nav aria-label=", "<nav class=\"nav sites\" aria-label=")
+}
+
+/// The body of a 404 page every Nabi site shares: a title, one plain
+/// sentence (HTML) and where to go instead, each `(href, text)`.
+pub fn not_found(title: str, sentence: str, links: List<(str, str)>) -> str {
+    let b = StrBuf::new();
+    for (href, text) in links { b.push_str(f"<li><a href=\"{esc(href)}\">{esc(text)}</a></li>"); }
+    f"<div class=\"lost\"><h1 class=\"t-h1\">{esc(title)}</h1><p class=\"t-lead\">{sentence}</p><ul class=\"lost-links\">{b.to_str()}</ul></div>"
+}
+
+/// The wordmark (kit::WORDMARK_SVG) inline, its letters in `--wm` so
+/// one file serves both themes; `label` names it for screen readers.
+pub fn wordmark(label: str) -> str {
+    let svg = pkg::kit::WORDMARK_SVG.trim();
+    let at = svg.find(">") ?? 0;
+    let head = svg[:at].replace(" role=\"img\"", "").replace(f" aria-label=\"Nabi\"", "");
+    let body = svg[at:].replace("<title>Nabi</title>", "").replace("fill=\"#1F1B1E\"", "class=\"wm\"");
+    f"{head} role=\"img\" aria-label=\"{esc(label)}\" height=\"28\"{body}"
+}
+
+/// The copyright notice every Nabi site carries (the same in Korean).
+pub const MADE_BY: str = "<span>© 2026 <a href=\"https://daminstudio.com\">DaminStudio</a> and the Nabi contributors</span>";
+pub const MADE_BY_KO: str = MADE_BY;
+pub const LICENSE: str = "MIT OR Apache-2.0";
+/// The footer's Security link on every Nabi site: one policy, the nabi
+/// repository's, for the toolchain, the packages and the sites.
+pub const SECURITY: str = "https://github.com/nabi-lang/nabi/security/policy";
+
+/// A Copy button: copy.js puts `text` on the clipboard and says so.
+pub fn copy_button(text: str, ko: bool) -> str {
+    let (label, name) = if ko { ("복사", "복사") } else { ("Copy", "Copy") };
+    f"<button type=\"button\" class=\"btn-2 btn-sm copy\" data-copy=\"{esc(text)}\" aria-label=\"{name}\">{label}</button>"
+}
+
+/// The footer of nabi-lang.org, the docs and packages.nabi-lang.org.
+pub struct Footer {
+    /// Where the brand goes, and its mark (`/nabi.svg`).
+    pub home: str;
+    pub logo: str;
+    /// The sentence under the brand, as text.
+    pub tagline: str;
+    /// Link columns: a title and its links as HTML (`<a>`s).
+    pub cols: List<(str, str)>;
+    pub sites: Sites;
+    /// HTML for the bar after the sites (release, licence) and after
+    /// the copyright notice (notes), each a run of `<span>`s.
+    pub before: str = "";
+    pub after: str = "";
+    /// Korean page: the theme switch, the sites and the bar speak Korean
+    /// (the columns come as given).
+    pub ko: bool = false;
+    /// The toolchain release. Set, the bar is the one every Nabi site
+    /// shares: sites, `nabi <release>`, the licence, the copyright, `after`, the
+    /// social links, the theme switch; `before` is then unused and the
+    /// social links leave the brand column.
+    pub release: str = "";
+}
+
+pub fn footer(f: Footer) -> str {
+    let cols = StrBuf::new();
+    for (title, links) in f.cols { cols.push_str(f"<div class=\"col\"><p class=\"t-label\">{esc(title)}</p>{links}</div>\n"); }
+    let lang = if f.ko { "ko" } else { "en" };
+    let made = if f.ko { MADE_BY_KO } else { MADE_BY };
+    let (about_social, bar) = if f.release.is_empty() {
+        (SOCIAL, f"{f.before}{made}{f.after}")
+    } else {
+        ("", f"<span class=\"mono\">nabi {esc(f.release)}</span><span>{LICENSE}</span>{made}{f.after}{SOCIAL}")
+    };
+    let tag = if f.tagline.is_empty() { "" } else { f"<p>{esc(f.tagline)}</p>" };
+    f"<footer class=\"foot\" lang=\"{lang}\">
+<div class=\"frame cols\">
+<div class=\"about\"><a class=\"brand\" href=\"{esc(f.home)}\" lang=\"en\">{wordmark("Nabi")}</a>{tag}{about_social}</div>
+{cols.to_str()}</div>
+<div class=\"frame bar\">
+{sites_nav_in(f.sites, f.ko)}
+{bar}
+{theme_seg(f.ko)}
+</div>
+</footer>
+"
+}
+
+/// `html` with the Markdown renderer's aligned table cells
+/// (`style="text-align:center"`) as nabi.css classes (`class="ta-c"`):
+/// the sites' CSP refuses style attributes.
+pub fn align_classes(html: str) -> str {
+    if !html.contains(" style=\"text-align:") { return html; }
+    html.replace(" style=\"text-align:left\"", " class=\"ta-l\"").replace(" style=\"text-align:center\"", " class=\"ta-c\"").replace(" style=\"text-align:right\"", " class=\"ta-r\"")
+}
+
+#[cfg(test)]
+fn count(s: str, of: str) -> usize { s.split(of).count() - 1 }
+
+#[test]
+fn pieces() {
+    assert(align_classes("<th style=\"text-align:center\">a</th><td>b</td><td style=\"text-align:right\">c</td>") == "<th class=\"ta-c\">a</th><td>b</td><td class=\"ta-r\">c</td>", "aligned cells");
+    assert(esc("a<b & \"c\">") == "a&lt;b &amp; &quot;c&quot;&gt;", "esc");
+    let tb = theme_button(false);
+    assert(tb.contains("aria-label=\"Dark theme\"") && tb.contains("aria-pressed=\"false\"") && tb.contains("class=\"ib theme\""), "button");
+    assert(theme_button(true).contains("다크 테마로 바꾸기"), "korean button");
+    let seg = theme_seg(false);
+    assert(count(seg, "data-theme-set=") == 3 && seg.contains("data-theme-set=\"auto\""), "switch");
+    assert(count(SOCIAL, "<a ") == 1 && SOCIAL.contains("github.com/nabi-lang"), "social");
+    let wm = wordmark("Nabi home");
+    assert(wm.starts_with("<svg") && wm.contains("aria-label=\"Nabi home\"") && wm.contains("class=\"wm\"") && !wm.contains("#1F1B1E"), "wordmark");
+    let nav = sites_nav(Sites { home: "https://nabi-lang.org", docs: "/latest", registry: "https://packages.nabi-lang.org", playground: "https://playground.nabi-lang.org", current: "docs" });
+    assert(nav.contains("<a href=\"/latest\" aria-current=\"page\">Docs</a>") && count(nav, "aria-current") == 1, "current site");
+    assert(theme_script("../").contains("src=\"../theme.js\"") && icons("/").contains("href=\"/favicon.ico\""), "head");
+    let h = head(Head { title: "T & U", site: "Nabi", desc: "d", img: "/og.png?v=1", img_w: 1200i64, img_h: 630i64, alt: "a", asset: |n| "/" + n + "?v=x" });
+    assert(h.contains("<title>T &amp; U</title>") && h.contains("<script src=\"/theme.js?v=x\"></script>") && h.contains("href=\"/style.css?v=x\"") && !h.contains("canonical"), "head");
+    assert(head(Head { title: "t", site: "s", desc: "d", url: "https://x/y", img: "i", img_w: 1i64, img_h: 1i64, alt: "", asset: |n| n, ko: true }).contains("<link rel=\"canonical\" href=\"https://x/y\">\n<meta property=\"og:type\""), "canonical");
+    assert(fonts().contains("<link rel=\"preload\" href=\"/fonts/Geist-Variable.woff2\" as=\"font\" type=\"font/woff2\" crossorigin>") && fonts().contains("href=\"/fonts/pretendard.css\""), "fonts");
+    let en = fonts_in("../", false);
+    assert(en.contains("href=\"../fonts/GeistMono-Variable.woff2\"") && !en.contains("pretendard") && !en.contains("https:"), "fonts, english, self-hosted");
+}
+
+#[test]
+fn footers() {
+    let sites = Sites { home: "/", docs: "https://docs.nabi-lang.org/latest", registry: "https://packages.nabi-lang.org", playground: "https://playground.nabi-lang.org", current: "home" };
+    let f = footer(Footer { home: "/", logo: "/logo.svg", tagline: "Fast & safe.", cols: [("Learn", "<a href=\"/learn\">Guide</a>")], sites: sites, before: "<span>v1</span>" });
+    assert(f.starts_with("<footer class=\"foot\"") && f.contains("<p>Fast &amp; safe.</p>"), "about");
+    assert(f.contains("<div class=\"col\"><p class=\"t-label\">Learn</p><a href=\"/learn\">Guide</a></div>"), "column");
+    assert(f.contains("<span>v1</span><span>© 2026 <a href=\"https://daminstudio.com\">DaminStudio</a> and the Nabi contributors</span>"), "bar");
+    assert(f.contains("lang=\"en\"><button"), "english switch");
+    let g = footer(Footer { home: "/", logo: "/logo.svg", tagline: "t", cols: List::new(), sites: sites, release: "0.1.4", ko: true });
+    assert(g.contains("<span class=\"mono\">nabi 0.1.4</span><span>MIT OR Apache-2.0</span><span>© 2026") && g.contains(">홈</a>"), "shared bar");
+    assert(count(g, "class=\"social\"") == 1 && g.contains("<footer class=\"foot\" lang=\"ko\">"), "social once, korean");
+    assert(header_sites(sites, false).starts_with("<nav class=\"nav sites\""), "header sites");
+    assert(not_found("Gone", "No page <code>x</code>.", [("/", "Home")]).contains("<li><a href=\"/\">Home</a></li>"), "404");
+    assert(copy_button("a\"b", false).contains("data-copy=\"a&quot;b\""), "copy");
+}

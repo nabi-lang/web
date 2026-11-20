@@ -1,0 +1,120 @@
+//! What the sites' generators share: writing the output tree, reading a
+//! PNG's size, JSON strings, cutting text, and the attribute scan the link
+//! checks run over the written pages.
+
+use std::fs;
+
+/// The directory part of `p` (`a/b/c.html` -> `a/b`); `""` at the top.
+pub fn dir_of(p: str) -> str {
+    if let k: usize = p.rfind("/") { return p[:k]; }
+    ""
+}
+
+/// `data` at `root/path`, its directories made first.
+pub fn write(root: str, path: str, data: str) throws {
+    let full = root + "/" + path;
+    try fs::create_dir_all(dir_of(full));
+    try fs::write(full, data);
+}
+
+/// Width and height from a PNG's IHDR chunk.
+pub fn png_size(path: str) throws -> (i64, i64) {
+    let b = try fs::read(path);
+    if b.len() < 24 { throw ValueError::new(f"{path}: not a PNG"); }
+    let be = |k: usize| ((b[k] as i64) << 24) | ((b[k + 1] as i64) << 16) | ((b[k + 2] as i64) << 8) | (b[k + 3] as i64);
+    (be(16), be(20))
+}
+
+/// `s` as a JSON string; other control characters become spaces.
+pub fn json_str(s: str) -> str {
+    let out = StrBuf::new();
+    out.push('"');
+    for c in s.chars() {
+        if c == '"' {
+            out.push_str("\\\"");
+        } else if c == '\\' {
+            out.push_str("\\\\");
+        } else if c == '\n' {
+            out.push_str("\\n");
+        } else if (c as u32) < 0x20u32 {
+            out.push(' ');
+        } else {
+            out.push(c);
+        }
+    }
+    out.push('"');
+    out.to_str()
+}
+
+/// `s` cut to `n` characters, with an ellipsis if it was longer.
+pub fn clip(s: str, n: usize) -> str {
+    let out = StrBuf::new();
+    let k = 0usize;
+    for c in s.chars() {
+        if k == n {
+            out.push_str("...");
+            break;
+        }
+        out.push(c);
+        k += 1;
+    }
+    out.to_str()
+}
+
+/// The text between `a` and the next `b` in `s` after `from`, and the
+/// index after `b`; none without them.
+pub fn between(s: str, from: usize, a: str, b: str) -> (str, usize) | none {
+    let i = (s[from:].find(a) ?? return none) + from + a.len();
+    let j = (s[i:].find(b) ?? return none) + i;
+    (s[i:j], j + b.len())
+}
+
+pub fn chars_of(s: str) -> List<char> {
+    let cs: List<char> = List::new();
+    for c in s.chars() { cs.push(c); }
+    cs
+}
+
+/// Every value of `name="..."` in the page `cs` (chars_of), after a
+/// space or at the start, with `&quot;` and `&amp;` undone.
+pub fn attr_values(cs: List<char>, name: str) -> List<str> {
+    let pat: List<char> = List::new();
+    for c in name.chars() { pat.push(c); }
+    pat.push('=');
+    pat.push('"');
+    let out: List<str> = List::new();
+    let n = cs.len();
+    let m = pat.len();
+    let i = 0usize;
+    while i + m <= n {
+        let hit = i == 0 || cs[i - 1] == ' ';
+        let k = 0usize;
+        while hit && k < m {
+            if cs[i + k] != pat[k] { hit = false; }
+            k += 1;
+        }
+        if !hit {
+            i += 1;
+            continue;
+        }
+        let v = StrBuf::new();
+        let j = i + m;
+        while j < n && cs[j] != '"' {
+            v.push(cs[j]);
+            j += 1;
+        }
+        out.push(v.to_str().replace("&quot;", "\"").replace("&amp;", "&"));
+        i = j;
+    }
+    out
+}
+
+#[test]
+fn helpers() {
+    assert(dir_of("a/b/c.html") == "a/b" && dir_of("c.html") == "", "dir_of");
+    assert(json_str("a\"b\\c\nd\te") == "\"a\\\"b\\\\c\\nd e\"", "json");
+    assert((between("a<b>c</b>", 0, "<b>", "</b>") ?? ("", 0usize)).0 == "c" && between("abc", 0, "x", "y") is none, "between");
+    assert(clip("abcdef", 3) == "abc..." && clip("ab", 3) == "ab", "clip");
+    let v = attr_values(chars_of("<a href=\"x?a=1&amp;b\" id=\"t\"><b xhref=\"no\">"), "href");
+    assert(v.len() == 1 && v[0] == "x?a=1&b", "attributes");
+}

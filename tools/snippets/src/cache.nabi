@@ -1,0 +1,81 @@
+// The work directory: per block a source, its output and a target
+// directory to rebuild from. Kept to the blocks that still exist, and to
+// `CAP` bytes, the least recently checked going first.
+
+use pkg::Snippet;
+use pkg::file_name;
+use std::fs;
+
+/// The most the work directory keeps.
+pub const CAP: u64 = 1u64 << 30;
+
+/// Files of block `name`: `<name>`, `<name>.nabi`, `.out`, `.err` and
+/// `.target`; their size, and when the block was last checked.
+struct Entry {
+    name: str;
+    paths: List<str>;
+    size: u64;
+    used: i64;
+}
+
+/// The block an entry of the work directory belongs to.
+pub fn block_of(entry: str) -> str {
+    for ext in [".nabi", ".out", ".err", ".target"] {
+        if entry.ends_with(ext) { return entry[:entry.len() - ext.len()]; }
+    }
+    entry
+}
+
+fn size_of(path: str) throws -> u64 {
+    let n = 0u64;
+    try for e in fs::walk(path) {
+        if e.is_file() { n += e.metadata().len(); }
+    }
+    n
+}
+
+/// Remove from `dir` what no block of `keep` names, then the least
+/// recently checked blocks while the rest is over `cap` bytes.
+pub fn prune(dir: str, keep: List<Snippet>, cap: u64) throws {
+    let live: Set<str> = Set::new();
+    for s in keep { live.insert(file_name(s)); }
+    let entries: Dict<str, Entry> = Dict::new();
+    try for e in fs::read_dir(dir) {
+        let path = f"{dir}/{e.file_name()}";
+        let name = block_of(e.file_name());
+        if !live.contains(name) {
+            if e.is_dir() { try fs::remove_dir_all(path); } else { try fs::remove_file(path); }
+            continue;
+        }
+        if !entries.contains_key(name) {
+            entries.insert(name, Entry { name: name, paths: List::new(), size: 0u64, used: 0i64 });
+        }
+        let en = entries[name];
+        en.paths.push(path);
+        en.size += try size_of(path);
+        let t = (try e.metadata().modified()).unix_secs();
+        if t > en.used { en.used = t; }
+        entries[name] = en;
+    }
+    let all: List<Entry> = List::new();
+    let total = 0u64;
+    for (_, en) in entries.iter() {
+        all.push(en);
+        total += en.size;
+    }
+    all.sort_by_key(|en: Entry| en.used);
+    for en in all {
+        if total <= cap { break; }
+        for p in en.paths {
+            if (try fs::metadata(p)).is_dir() { try fs::remove_dir_all(p); } else { try fs::remove_file(p); }
+        }
+        total -= en.size;
+    }
+}
+
+#[test]
+fn maps_entries_to_blocks() {
+    assert(block_of("learn-03-L12.target") == "learn-03-L12", "target dir");
+    assert(block_of("learn-03-L12.out") == "learn-03-L12", "output");
+    assert(block_of("learn-06-L148") == "learn-06-L148", "check dir");
+}

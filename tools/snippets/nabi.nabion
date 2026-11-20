@@ -1,0 +1,6 @@
+// The code block checks the content tool and nabi-lang.org share. A
+// package of its own: the `web` library builds the kit's scripts in.
+Package {
+    name: "snippets",
+    version: "0.1.0",
+}

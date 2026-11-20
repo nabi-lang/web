@@ -1,0 +1,7 @@
+Package {
+    name: "nabi_content",
+    version: "0.1.0",
+    deps: {
+        "snippets": Dep::path("../snippets"),
+    },
+}

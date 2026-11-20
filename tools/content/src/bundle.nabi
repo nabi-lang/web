@@ -1,0 +1,59 @@
+// One branch of a content repo (docs, www, spec) as one NABION file.
+// Text only; images come from the web kit.
+
+use std::fs;
+use std::nabion;
+
+#[derive(Nabion)]
+pub struct Bundle {
+    pub repo: str;
+    pub branch: str;
+    pub sha: str;
+    /// Toolchain the code blocks were checked with.
+    pub toolchain: str;
+    /// Path below the root -> text.
+    pub files: Dict<str, str>;
+}
+
+/// Repository files that are not content.
+fn skipped(path: str) -> bool {
+    path.starts_with(".") || path.contains("/.")
+        || path == "README.md" || path == "CODE_OF_CONDUCT.md"
+        || path == "CONTRIBUTING.md" || path == "SECURITY.md"
+}
+
+fn wanted(path: str) -> bool {
+    !skipped(path) && (path.ends_with(".md") || path.ends_with(".nabion"))
+}
+
+/// Content files under `root`, keyed by path below it.
+pub fn collect(root: str) throws -> Dict<str, str> {
+    let files: Dict<str, str> = Dict::new();
+    let base = if root == "." { "" } else if root.ends_with("/") { root } else { root + "/" };
+    try for e in fs::walk(root) {
+        if !e.is_file() { continue; }
+        let p = e.path().as_str();
+        let q = if p.starts_with("./") { p[2:] } else { p };
+        if !q.starts_with(base) { continue; }
+        let rel = q[base.len():];
+        if wanted(rel) { files.insert(rel, try fs::read_to_str(p)); }
+    }
+    files
+}
+
+pub fn write(b: Bundle, out: str) throws {
+    try fs::write(out, try nabion::to_str(b));
+}
+
+pub fn read(path: str) throws -> Bundle {
+    try nabion::from_str(try fs::read_to_str(path))
+}
+
+#[test]
+fn skips_repository_files() {
+    assert(wanted("learn/05-sum-types.md"), "a chapter");
+    assert(wanted("versions.nabion"), "the version list");
+    assert(!wanted("README.md"), "readme");
+    assert(!wanted(".github/CODEOWNERS"), "dot dir");
+    assert(!wanted("learn/img.png"), "binary");
+}

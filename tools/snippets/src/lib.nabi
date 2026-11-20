@@ -1,0 +1,108 @@
+//! The ```nabi blocks of Markdown pages: each builds and runs, and its
+//! stdout matches the ```output block after it.
+//!
+//!   ```nabi          build and run (the default)
+//!   ```nabi build    build only (servers, stdin readers)
+//!   ```nabi norun    not checked (fragments, REPL sessions, endless loops)
+//!   ```text check=checks/x.nabi
+//!                   `nabi check` of that file prints these lines, in this
+//!                   order (lines left out of the block are allowed)
+
+pub mod cache;
+pub mod check;
+
+pub use pkg::check::check_all;
+
+pub struct Snippet {
+    /// Page, as the caller names it.
+    pub page: str;
+    /// 1-based line of the opening fence.
+    pub line: usize;
+    pub code: str;
+    /// `run`, `build`, `norun`, or `diag` (a ```text check=<file> block:
+    /// `code` is that file's path, `expect` the diagnostics).
+    pub mode: str;
+    pub expect: str | none;
+}
+
+fn fence_len(t: str) -> usize {
+    let n = 0usize;
+    for c in t.chars() {
+        if c != '`' { break; }
+        n += 1;
+    }
+    n
+}
+
+/// The blocks of page `page`, its text `text`.
+pub fn extract(page: str, text: str) -> List<Snippet> {
+    let lines: List<str> = List::new();
+    for l in text.lines() { lines.push(l); }
+    let out: List<Snippet> = List::new();
+    let i = 0usize;
+    while i < lines.len() {
+        let t = lines[i].trim_start();
+        let n = fence_len(t);
+        if n < 3 {
+            i += 1;
+            continue;
+        }
+        let info: List<str> = List::new();
+        for w in t[n:].split_whitespace() { info.push(w); }
+        let start = i;
+        let body = StrBuf::new();
+        i += 1;
+        while i < lines.len() && !(fence_len(lines[i].trim_start()) >= n && lines[i].trim()[n:].trim().is_empty()) {
+            body.push_str(lines[i]);
+            body.push('\n');
+            i += 1;
+        }
+        i += 1;
+        if info.len() > 1 && info[0] == "text" && info[1].starts_with("check=") {
+            out.push(Snippet { page: page, line: start + 1, code: info[1]["check=".len():], mode: "diag", expect: body.to_str() });
+            continue;
+        }
+        if info.len() == 0 || info[0] != "nabi" { continue; }
+        let mode = if info.len() > 1 { info[1] } else { "run" };
+        let s = Snippet { page: page, line: start + 1, code: body.to_str(), mode: mode, expect: none };
+        // An ```output block after blank lines only.
+        let j = i;
+        while j < lines.len() && lines[j].trim().is_empty() { j += 1; }
+        if j < lines.len() && lines[j].trim() == "```output" {
+            let exp = StrBuf::new();
+            j += 1;
+            while j < lines.len() && lines[j].trim() != "```" {
+                exp.push_str(lines[j]);
+                exp.push('\n');
+                j += 1;
+            }
+            s.expect = exp.to_str();
+            i = j + 1;
+        }
+        out.push(s);
+    }
+    out
+}
+
+/// The name of `s`'s files in the work directory.
+pub fn file_name(s: Snippet) -> str {
+    let base = s.page.replace(".md", "").replace("../", "").replace("./", "").replace("/", "-");
+    f"{base}-L{s.line}"
+}
+
+#[test]
+fn extracts_blocks() {
+    let md = "# t\n\n```nabi\nprintln(\"a\");\n```\n\n```output\na\n```\n\n````nabi build\nlet s = \"```\";\n````\n\n```nabi norun\nx\n```\n\n```bash\nls\n```\n\n```text check=checks/x.nabi\nerror[E1]: x\n```\n";
+    let ss = extract("p.md", md);
+    assert(ss.len() == 4, "three nabi blocks and a check");
+    assert(ss[0].mode == "run" && ss[0].line == 3 && (ss[0].expect ?? "") == "a\n", "run + output");
+    assert(ss[1].mode == "build" && ss[1].code == "let s = \"```\";\n", "longer fence");
+    assert(ss[2].mode == "norun" && ss[2].expect is none, "norun");
+    assert(ss[3].mode == "diag" && ss[3].code == "checks/x.nabi" && (ss[3].expect ?? "") == "error[E1]: x\n", "check");
+}
+
+#[test]
+fn names_files_by_page_and_line() {
+    let s = Snippet { page: "../docs/learn/03-functions.md", line: 12, code: "", mode: "run", expect: none };
+    assert(file_name(s) == "docs-learn-03-functions-L12", "relative page");
+}

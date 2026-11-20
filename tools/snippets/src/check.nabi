@@ -1,0 +1,159 @@
+// Building and running the blocks, in parallel, each under a time limit.
+
+use pkg::Snippet;
+use pkg::cache;
+use pkg::file_name;
+use core::par;
+use core::time::{Duration, Instant};
+use std::fs;
+#[cfg(target_family = "unix")]
+use std::process;
+#[cfg(target_family = "unix")]
+use std::process::Signal;
+use std::process::{Child, Command, ExitStatus, Stdio};
+use std::thread;
+
+/// How long one `nabi` command may take.
+const LIMIT: Duration = Duration::secs(60);
+
+/// `cmd` leading a process group of its own, so the whole tree can go.
+#[cfg(target_family = "unix")]
+fn grouped(cmd: Command) -> Command { cmd.process_group(0) }
+
+#[cfg(not(target_family = "unix"))]
+fn grouped(cmd: Command) -> Command { cmd }
+
+/// Kill `child` and what it started (`nabi run`'s program, its children).
+#[cfg(target_family = "unix")]
+fn kill_tree(child: Child) {
+    try process::send_signal((0i64 - (child.id() as i64)) as u32, Signal::Kill) catch _ {};
+    try child.kill() catch _ {};
+}
+
+#[cfg(not(target_family = "unix"))]
+fn kill_tree(child: Child) {
+    _ = try? Command::new("taskkill").args(["/F", "/T", "/PID", f"{child.id()}"]).stdin(Stdio::Null).stdout(Stdio::Null).stderr(Stdio::Null).status();
+    try child.kill() catch _ {};
+}
+
+/// Exit status of `tool args`, or `none` after `LIMIT`. Output goes to
+/// `dir/<name>.out` and `.err`.
+fn run(tool: str, args: List<str>, dir: str, name: str) throws -> bool | none {
+    let child = try grouped(Command::new(tool))
+        .args(args)
+        .stdin(Stdio::Null)
+        .stdout(Stdio::File(try fs::File::create(f"{dir}/{name}.out")))
+        .stderr(Stdio::File(try fs::File::create(f"{dir}/{name}.err")))
+        .spawn();
+    let t0 = Instant::now();
+    loop {
+        if let st: ExitStatus = try child.try_wait() { return st.success(); }
+        if t0.elapsed() > LIMIT {
+            kill_tree(child);
+            _ = try child.wait();
+            return none;
+        }
+        thread::sleep(Duration::ms(20));
+    }
+}
+
+fn first_lines(s: str, n: usize) -> str {
+    let out = StrBuf::new();
+    let k = 0usize;
+    for l in s.lines() {
+        if k == n { out.push_str("    ...\n"); break; }
+        out.push_str("    " + l + "\n");
+        k += 1;
+    }
+    out.to_str()
+}
+
+/// Failure report for one snippet, or `""`.
+fn check_one(tool: str, root: str, dir: str, s: Snippet) -> str {
+    let at = f"{s.page}:{s.line}";
+    if s.mode == "diag" { return try check_diag(tool, root, dir, s, at) catch e { f"{at}: {e}\n" }; }
+    try check_snippet(tool, dir, s, at) catch e { f"{at}: {e}\n" }
+}
+
+/// Diagnostic lines of `nabi check`, status lines dropped, `prefix` cut
+/// from paths.
+fn diag_lines(out: str, prefix: str) -> List<str> {
+    let ls: List<str> = List::new();
+    for l in out.replace(prefix, "").lines() {
+        let t = l.trim_start();
+        if t.starts_with("Checking ") || t.starts_with("Checked ") || t.starts_with("Finished ") { continue; }
+        ls.push(l.trim_end());
+    }
+    while ls.len() > 0 && ls[ls.len() - 1].is_empty() { ls.pop(); }
+    ls
+}
+
+/// `want` is `got` with lines left out: same first line, rest in order.
+pub fn diag_matches(want: List<str>, got: List<str>) -> bool {
+    if want.len() == 0 || got.len() == 0 || want[0] != got[0] { return false; }
+    let k = 0usize;
+    for l in got {
+        if k < want.len() && l == want[k] { k += 1; }
+    }
+    k == want.len()
+}
+
+fn check_diag(tool: str, root: str, dir: str, s: Snippet, at: str) throws -> str {
+    let name = file_name(s);
+    let sub = f"{dir}/{name}".replace("//", "/");
+    try fs::create_dir_all(sub);
+    try fs::write(f"{sub}/main.nabi", try fs::read_to_str(root + "/" + s.code));
+    // A failing check is the point; its output is what counts.
+    _ = try run(tool, ["check", f"{sub}/main.nabi"], dir, name);
+    let got = diag_lines((try fs::read_to_str(f"{dir}/{name}.err")) + (try fs::read_to_str(f"{dir}/{name}.out")), sub + "/");
+    let want = diag_lines(s.expect ?? "", "");
+    if diag_matches(want, got) { return ""; }
+    let shown = StrBuf::new();
+    for l in got { shown.push_str(l + "\n"); }
+    f"{at}: {s.code}: nabi check prints something else\n  documented:\n{first_lines(s.expect ?? "", 12)}  got:\n{first_lines(shown.to_str(), 12)}"
+}
+
+fn check_snippet(tool: str, dir: str, s: Snippet, at: str) throws -> str {
+    let name = file_name(s);
+    let src = f"{dir}/{name}.nabi";
+    try fs::write(src, s.code);
+    let cmd = if s.mode == "build" { "build" } else { "run" };
+    let ok = try run(tool, ["-q", cmd, src, "--target-dir", f"{dir}/{name}.target"], dir, name);
+    let out = try fs::read_to_str(f"{dir}/{name}.out");
+    let err = try fs::read_to_str(f"{dir}/{name}.err");
+    if !(ok is bool) { return f"{at}: timed out after {LIMIT:?}; mark a block that never ends `norun`\n"; }
+    if !(ok ?? false) { return f"{at}: {cmd} failed\n{first_lines((err + out).replace(dir + "/", ""), 12)}"; }
+    if let e: str = s.expect {
+        if out.trim_end() != e.trim_end() {
+            return f"{at}: output differs\n  expected:\n{first_lines(e, 12)}  got:\n{first_lines(out, 12)}";
+        }
+    }
+    ""
+}
+
+/// Check `snips` with `nabi` command `tool`, in parallel, `diag` blocks
+/// against the files under `root`, in work directory `dir`; then prune
+/// `dir` to the blocks of `keep` (all of the content's, so a filtered
+/// run keeps the rest). The failure reports.
+pub fn check_all(tool: str, root: str, dir: str, snips: List<Snippet>, keep: List<Snippet>) throws -> List<str> {
+    try fs::create_dir_all(dir);
+    let todo: List<Snippet> = List::new();
+    for s in snips {
+        if s.mode != "norun" { todo.push(s); }
+    }
+    let reports = par::map(todo, |s: Snippet| check_one(tool, root, dir, s));
+    let bad: List<str> = List::new();
+    for r in reports {
+        if !r.is_empty() { bad.push(r); }
+    }
+    try cache::prune(dir, keep, cache::CAP);
+    bad
+}
+
+#[test]
+fn diagnostics_allow_left_out_lines() {
+    let got = ["error[E1]: x", "  --> main.nabi:1:1", "   |", "   = help: y"];
+    assert(diag_matches(["error[E1]: x", "   = help: y"], got), "elided location");
+    assert(!diag_matches(["error[E1]: z"], got), "first line differs");
+    assert(!diag_matches(["error[E1]: x", "   = help: w"], got), "help differs");
+}

@@ -1,0 +1,12 @@
+//! The Nabi sites' shared code: `http` (HTTP/1.1, forms, cookies, static
+//! files), `url` (canonical addresses), `kit` (the kit's files built in),
+//! `chrome` (the markup the sites share), `build` (the generators' file
+//! and attribute helpers) and `apidoc` (library sources scanned for API
+//! pages, and the pages' navigation).
+
+pub mod apidoc;
+pub mod build;
+pub mod chrome;
+pub mod http;
+pub mod kit;
+pub mod url;

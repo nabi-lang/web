@@ -1,0 +1,115 @@
+//! The kit's files as a site publishes them, built into the program: the
+//! stylesheet, the scripts, the mark and the icons. A generator writes them
+//! into its output, a server answers with them; either way their public
+//! names stay what pages and link previews already point at. The webfonts
+//! stay files (FONTS_DIR).
+
+use core::io::IoError;
+use std::fs;
+
+pub struct File {
+    /// The public name, under the site root (`nabi.css`, `logo.svg`).
+    pub name: str;
+    pub data: Slice<u8>;
+}
+
+pub const NABI_CSS: str = include_str!("../../css/nabi.css");
+/// The mark, from the toolchain repo's assets/ (tools/brand.sh).
+pub const LOGO_SVG: str = include_str!("../../assets/brand/logo.svg");
+/// The horizontal wordmark (mark + "Nabi" in Khand), light ink; the
+/// header recolours the letters with currentColor (chrome::wordmark).
+pub const WORDMARK_SVG: str = include_str!("../../assets/brand/wordmark-light.svg");
+/// The wordmark with light letters, for dark grounds (link preview cards).
+pub const WORDMARK_DARK_SVG: str = include_str!("../../assets/brand/wordmark-dark.svg");
+
+/// Every file a site publishes from the kit. All four sites wear the
+/// same mark.
+pub fn files() -> List<File> {
+    [
+        File { name: "nabi.css", data: include_bytes!("../../css/nabi.css") },
+        File { name: "theme.js", data: include_bytes!("../../js/theme.js") },
+        File { name: "keys.js", data: include_bytes!("../../js/keys.js") },
+        File { name: "copy.js", data: include_bytes!("../../js/copy.js") },
+        File { name: "logo.svg", data: include_bytes!("../../assets/brand/logo.svg") },
+        File { name: "favicon.ico", data: include_bytes!("../../assets/brand/favicon.ico") },
+        File { name: "favicon.svg", data: include_bytes!("../../assets/brand/favicon.svg") },
+        File { name: "apple-touch-icon.png", data: include_bytes!("../../assets/brand/apple-touch-icon.png") },
+        File { name: "icon-192.png", data: include_bytes!("../../assets/brand/icon-192.png") },
+        File { name: "icon-512.png", data: include_bytes!("../../assets/brand/icon-512.png") },
+        File { name: "icon-maskable-192.png", data: include_bytes!("../../assets/brand/icon-maskable-192.png") },
+        File { name: "icon-maskable-512.png", data: include_bytes!("../../assets/brand/icon-maskable-512.png") },
+        File { name: "site.webmanifest", data: include_bytes!("../../assets/brand/site.webmanifest") },
+    ].to_list()
+}
+
+/// Where the webfonts are in a site's checkout: the kit is its `web/`
+/// submodule. They are files, not built in (3 MB): Geist, Geist Mono,
+/// Pretendard's stylesheet and its slices, and their licences, published
+/// as `fonts/` beside nabi.css.
+pub const FONTS_DIR: str = "web/assets/fonts";
+
+/// Copy every file under `from` (FONTS_DIR) into `to` (`<out>/fonts`),
+/// making the directories; the names written, relative to `to`.
+pub fn copy_fonts(from: str, to: str) throws (IoError) -> List<str> {
+    let names: List<str> = List::new();
+    try for e in fs::walk(from) {
+        if !e.is_file() { continue; }
+        let name = e.path().as_str()[from.len() + 1:].replace("\\", "/");
+        if name.ends_with(".md") { continue; }
+        let dest = to + "/" + name;
+        if let at: usize = dest.rfind("/") { try fs::create_dir_all(dest[:at]); }
+        try fs::copy(e.path(), dest);
+        names.push(name);
+    }
+    names
+}
+
+/// Whether `name`, a path under a site's static/, is a source the page
+/// scripts are built from rather than a file to publish: TypeScript
+/// (`*.ts`, `*.tsx`) and the components under `ui/` (web/tools/build.ts).
+pub fn is_source(name: str) -> bool {
+    name.ends_with(".ts") || name.ends_with(".tsx") || name.starts_with("ui/")
+}
+
+/// The kit's file published as `name` (`nabi.css`, no leading slash), or none.
+pub fn find(name: str) -> File | none {
+    for f in files() {
+        if f.name == name { return f; }
+    }
+    none
+}
+
+#[test]
+fn sources() {
+    assert(is_source("search.tsx") && is_source("hero.ts") && is_source("ui/results.tsx") && is_source("ui/x.js"), "sources");
+    assert(!is_source("search.js") && !is_source("style.css") && !is_source("og.png") && !is_source("examples/hello.nabi"), "published");
+}
+
+#[test]
+fn names() {
+    let names: List<str> = List::new();
+    for f in files() { names.push(f.name); }
+    assert(names.join(" ") == "nabi.css theme.js keys.js copy.js logo.svg favicon.ico favicon.svg apple-touch-icon.png icon-192.png icon-512.png icon-maskable-192.png icon-maskable-512.png site.webmanifest", names.join(" "));
+    let logo = find("logo.svg") ?? panic("no logo.svg");
+    assert(logo.data.len() == LOGO_SVG.len(), "logo");
+    let css = find("nabi.css") ?? panic("no nabi.css");
+    assert(css.data.len() == NABI_CSS.len() && NABI_CSS.starts_with("/*"), "nabi.css");
+    assert(find("style.css") is none && find("/nabi.css") is none, "kit files only, by name");
+    for f in files() { assert(f.data.len() > 0, f.name); }
+}
+
+#[test]
+fn webfonts() {
+    let out = "target/webfonts-test";
+    let names = try copy_fonts("../assets/fonts", out) catch e { panic(f"copy_fonts: {e}"); };
+    assert(names.len() == 97, f"{names.len()} font files");
+    let css = try fs::read_to_str(out + "/pretendard.css") catch _ { panic("no pretendard.css"); };
+    for n in names {
+        let data = try fs::read(out + "/" + n) catch _ { panic(n); };
+        assert(data.len() > 0, n);
+        // woff2 signature
+        if n.ends_with(".woff2") { assert(data[0] == 0x77u8 && data[1] == 0x4fu8 && data[2] == 0x46u8 && data[3] == 0x32u8, n); }
+        if n.starts_with("pretendard/") { assert(css.contains(f"url(\"{n}\")"), n); }
+    }
+    assert(NABI_CSS.contains("url(\"fonts/Geist-Variable.woff2\")") && NABI_CSS.contains("url(\"fonts/GeistMono-Variable.woff2\")"), "nabi.css faces");
+}

@@ -1,0 +1,549 @@
+//! HTTP/1.1 for the Nabi sites' servers: one request per connection
+//! (`Connection: close`), bounded head, body and time; forms, cookies,
+//! static files, and the caching helpers (fingerprints, ETags).
+
+use core::convert::AsBytes;
+use core::crypto::HashAlgorithm;
+use core::encoding::hex;
+use core::time::{Duration, Instant};
+use std::fs;
+use std::net::TcpStream;
+
+pub const MAX_HEAD: usize = 16384;
+pub const MAX_BODY: usize = 1048576;
+
+pub struct Request {
+    pub method: str;
+    /// Percent-encoded, without the query.
+    pub path: str;
+    pub query: str;
+    /// Lowercased names; a repeated header's values joined with `, `.
+    pub headers: Dict<str, str>;
+    pub body: str;
+}
+
+impl Request {
+    pub fn header(self, name: str) -> str { self.headers.get(name) ?? "" }
+}
+
+/// A request the server answers with `status` and closes.
+pub struct HttpError {
+    pub status: i32;
+    pub msg: str;
+}
+
+impl Display for HttpError {
+    fn fmt(self, ref f: Formatter) throws (FmtError) { try f.write_str(f"{self.status} {self.msg}") }
+}
+
+impl Debug for HttpError {
+    fn fmt(self, ref f: Formatter) throws (FmtError) { try f.write_str(f"HttpError({self.status}, {self.msg})") }
+}
+
+impl Error for HttpError {}
+
+fn fail(status: i32, msg: str) -> HttpError { HttpError { status: status, msg: msg } }
+
+fn is_tchar(c: char) -> bool {
+    c.is_ascii_alphanumeric() || "!#$%&'*+-.^_`|~".contains(f"{c}")
+}
+
+fn is_token(s: str) -> bool {
+    if s.is_empty() { return false; }
+    for c in s.chars() {
+        if !is_tchar(c) { return false; }
+    }
+    true
+}
+
+/// The request line and headers (CRLF-separated, without the blank line).
+pub fn parse_head(head: str) throws (HttpError) -> Request {
+    let lines: List<str> = List::new();
+    for l in head.split("\r\n") { lines.push(l); }
+    let parts: List<str> = List::new();
+    for p in lines[0].split(" ") { parts.push(p); }
+    if parts.len() != 3 || !is_token(parts[0]) { throw fail(400, "bad request line"); }
+    if parts[2] != "HTTP/1.1" && parts[2] != "HTTP/1.0" { throw fail(505, "HTTP/1.x only"); }
+    let target = parts[1];
+    if !target.starts_with("/") { throw fail(400, "bad request target"); }
+    for c in target.chars() {
+        if (c as u32) <= 0x20u32 || (c as u32) >= 0x7fu32 { throw fail(400, "bad request target"); }
+    }
+    let path = target;
+    let query = "";
+    if let p: (str, str) = target.split_once("?") {
+        path = p.0;
+        query = p.1;
+    }
+    let headers: Dict<str, str> = Dict::new();
+    for k in 1..lines.len() {
+        let l = lines[k];
+        let (name, value) = l.split_once(":") ?? ("", "");
+        if !is_token(name) { throw fail(400, "bad header"); }
+        let n = name.to_lowercase();
+        let v = value.trim();
+        for c in v.chars() {
+            if (c as u32) < 0x20u32 && c != '\t' { throw fail(400, "bad header"); }
+        }
+        if let old: str = headers.get(n) {
+            // Two lengths could be read two ways; refuse them.
+            if n == "content-length" || n == "host" { throw fail(400, f"repeated {n}"); }
+            headers.insert(n, old + ", " + v);
+        } else {
+            headers.insert(n, v);
+        }
+    }
+    if headers.contains_key("transfer-encoding") { throw fail(501, "no chunked bodies; send Content-Length"); }
+    Request { method: parts[0], path: path, query: query, headers: headers, body: "" }
+}
+
+/// The body length a request announces.
+pub fn body_len(r: Request) throws (HttpError) -> usize {
+    let cl = r.header("content-length");
+    if cl.is_empty() { return 0usize; }
+    for c in cl.chars() {
+        if !c.is_ascii_digit() { throw fail(400, "bad Content-Length"); }
+    }
+    if cl.len() > 9 { throw fail(413, "body too large"); }
+    try cl.parse::<usize>() catch _ { throw fail(400, "bad Content-Length"); }
+}
+
+/// Index of `\r\n\r\n` in `b[from..n]`.
+fn head_end(b: List<u8>, from: usize, n: usize) -> usize | none {
+    let i = from;
+    while i + 4 <= n {
+        if b[i] == 13u8 && b[i + 1] == 10u8 && b[i + 2] == 13u8 && b[i + 3] == 10u8 { return i; }
+        i += 1;
+    }
+    none
+}
+
+/// The most a request head may take to arrive.
+pub const HEAD_LIMIT: Duration = Duration::secs(5);
+
+/// Before a read: wait no longer than what is left of `limit` since `t0`.
+fn read_deadline(s: TcpStream, t0: Instant, limit: Duration) throws (HttpError) {
+    let left = limit.as_ms() - t0.elapsed().as_ms();
+    if left <= 0i64 { throw fail(408, "request too slow"); }
+    s.set_read_timeout(Duration::ms(left));
+}
+
+/// One request from `s`: its head within HEAD_LIMIT and the whole of it
+/// within `limit`, however slowly the bytes trickle in.
+pub fn read_request(s: TcpStream, max_body: usize, limit: Duration) throws (HttpError) -> Request {
+    let t0 = Instant::now();
+    let head_limit = if limit.as_ms() < HEAD_LIMIT.as_ms() { limit } else { HEAD_LIMIT };
+    let data: List<u8> = List::new();
+    let chunk = List::filled(8192, 0u8);
+    let scanned = 0usize;
+    let he = 0usize;
+    loop {
+        if data.len() > MAX_HEAD { throw fail(431, "request head too large"); }
+        try read_deadline(s, t0, head_limit);
+        let k = try s.read(chunk) catch _ { throw fail(408, "read timeout"); };
+        if k == 0 { throw fail(400, "connection closed mid-request"); }
+        for i in 0..k { data.push(chunk[i]); }
+        if let e: usize = head_end(data, if scanned > 3 { scanned - 3 } else { 0 }, data.len()) {
+            he = e;
+            break;
+        }
+        scanned = data.len();
+    }
+    if he > MAX_HEAD { throw fail(431, "request head too large"); }
+    let head = try str::from_utf8(data[0:he]) catch _ { throw fail(400, "head is not UTF-8"); };
+    let r = try parse_head(head);
+    let n = try body_len(r);
+    if n > max_body { throw fail(413, "body too large"); }
+    let body: List<u8> = List::with_capacity(n);
+    let i = he + 4;
+    while i < data.len() && body.len() < n {
+        body.push(data[i]);
+        i += 1;
+    }
+    while body.len() < n {
+        try read_deadline(s, t0, limit);
+        let k = try s.read(chunk) catch _ { throw fail(408, "read timeout"); };
+        if k == 0 { throw fail(400, "connection closed mid-body"); }
+        let j = 0usize;
+        while j < k && body.len() < n {
+            body.push(chunk[j]);
+            j += 1;
+        }
+    }
+    r.body = try str::from_utf8(body[0:n]) catch _ { throw fail(400, "body is not UTF-8"); };
+    r
+}
+
+pub fn reason(status: i32) -> str {
+    match status {
+        200 => "OK",
+        304 => "Not Modified",
+        301 => "Moved Permanently",
+        302 => "Found",
+        303 => "See Other",
+        400 => "Bad Request",
+        401 => "Unauthorized",
+        403 => "Forbidden",
+        404 => "Not Found",
+        405 => "Method Not Allowed",
+        408 => "Request Timeout",
+        409 => "Conflict",
+        413 => "Content Too Large",
+        410 => "Gone",
+        415 => "Unsupported Media Type",
+        429 => "Too Many Requests",
+        431 => "Request Header Fields Too Large",
+        451 => "Unavailable For Legal Reasons",
+        500 => "Internal Server Error",
+        501 => "Not Implemented",
+        503 => "Service Unavailable",
+        505 => "HTTP Version Not Supported",
+        _ => "Status",
+    }
+}
+
+/// What every answer carries. Browsers keep HSTS only from https, so it
+/// holds behind the TLS proxy and is ignored on a plain local server.
+pub const SECURITY: [str; 5] = [
+    "Strict-Transport-Security: max-age=63072000; includeSubDomains",
+    "X-Content-Type-Options: nosniff",
+    "Referrer-Policy: strict-origin-when-cross-origin",
+    "Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=(), browsing-topics=()",
+    "Cross-Origin-Opener-Policy: same-origin",
+];
+
+/// Write a whole response; `head_only` for `HEAD`. A 304 goes without a
+/// body or Content-Length (its length would be the 200's).
+pub fn send<B: AsBytes>(s: TcpStream, status: i32, headers: List<str>, body: B, head_only: bool) throws {
+    let bytes = body.byte_slice();
+    let bare = status == 304;
+    let h = StrBuf::new();
+    h.push_str(f"HTTP/1.1 {status} {reason(status)}\r\n");
+    for x in headers { h.push_str(x + "\r\n"); }
+    if !bare { h.push_str(f"Content-Length: {bytes.len()}\r\n"); }
+    h.push_str("Connection: close\r\n");
+    for x in SECURITY { h.push_str(x + "\r\n"); }
+    h.push_str("\r\n");
+    s.set_write_timeout(Duration::secs(30));
+    try s.write_all(h.to_str());
+    if !head_only && !bare { try s.write_all(bytes); }
+}
+
+/// For a file asked for by its current fingerprint (`?v=`): a year, never
+/// revalidated.
+pub const IMMUTABLE: str = "Cache-Control: public, max-age=31536000, immutable";
+/// For pages and files without a fingerprint: kept, but checked against
+/// the ETag on every use.
+pub const REVALIDATE: str = "Cache-Control: no-cache";
+
+fn sha_hex<B: AsBytes>(data: B) -> str { hex::encode(HashAlgorithm::Sha256.digest(data)) }
+
+/// The fingerprint of `data`: 10 hex digits of its SHA-256, for `?v=`.
+pub fn version<B: AsBytes>(data: B) -> str { sha_hex(data)[:10] }
+
+/// `url` with `data`'s fingerprint: `/nabi.css?v=0123456789`.
+pub fn versioned<B: AsBytes>(url: str, data: B) -> str { f"{url}?v={version(data)}" }
+
+/// Whether query string `query` names `data`'s current fingerprint, so
+/// the answer may be IMMUTABLE (an old `?v=` gets REVALIDATE).
+pub fn is_current<B: AsBytes>(query: str, data: B) -> bool {
+    let v = "v=" + version(data);
+    for kv in query.split("&") {
+        if kv == v { return true; }
+    }
+    false
+}
+
+/// A strong ETag for `data`: 16 hex digits of its SHA-256, quoted.
+pub fn etag<B: AsBytes>(data: B) -> str { "\"" + sha_hex(data)[:16] + "\"" }
+
+/// Whether `r` holds `tag` already (If-None-Match, weak comparison), so a
+/// GET or HEAD is answered 304 with the ETag and Cache-Control alone.
+pub fn not_modified(r: Request, tag: str) -> bool {
+    if r.method != "GET" && r.method != "HEAD" { return false; }
+    let inm = r.header("if-none-match");
+    if inm.is_empty() { return false; }
+    let want = if tag.starts_with("W/") { tag[2:] } else { tag };
+    for t in inm.split(",") {
+        let x = t.trim();
+        if x == "*" || x == want || x == "W/" + want { return true; }
+    }
+    false
+}
+
+fn hexval(b: u8) -> i32 {
+    if b >= 48u8 && b <= 57u8 { return (b - 48u8) as i32; }
+    if b >= 97u8 && b <= 102u8 { return (b - 87u8) as i32; }
+    if b >= 65u8 && b <= 70u8 { return (b - 55u8) as i32; }
+    -1
+}
+
+/// `%XX` decoded (and `+` as a space with `plus`); none when malformed
+/// or not UTF-8.
+pub fn pct_decode(s: str, plus: bool) -> str | none {
+    let out: List<u8> = List::new();
+    let i = 0usize;
+    while i < s.len() {
+        let b = s.byte(i);
+        if b == 37u8 {
+            if i + 2 >= s.len() { return none; }
+            let hi = hexval(s.byte(i + 1));
+            let lo = hexval(s.byte(i + 2));
+            if hi < 0 || lo < 0 { return none; }
+            out.push((hi * 16 + lo) as u8);
+            i += 3;
+        } else {
+            out.push(if plus && b == 43u8 { 32u8 } else { b });
+            i += 1;
+        }
+    }
+    try str::from_utf8(out[0:out.len()]) catch _ { none }
+}
+
+/// Query string / form fields; a malformed pair is dropped.
+pub fn form(s: str) -> Dict<str, str> {
+    let out: Dict<str, str> = Dict::new();
+    for pair in s.split("&") {
+        if pair.is_empty() { continue; }
+        let (k, v) = pair.split_once("=") ?? (pair, "");
+        if let dk: str = pct_decode(k, true) {
+            if let dv: str = pct_decode(v, true) {
+                if !out.contains_key(dk) { out.insert(dk, dv); }
+            }
+        }
+    }
+    out
+}
+
+/// Percent-encode everything but unreserved characters (RFC 3986).
+pub fn pct_encode(s: str) -> str {
+    let digits: List<char> = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F'];
+    let out = StrBuf::new();
+    for b in s.as_bytes() {
+        let c = b as char;
+        if c.is_ascii_alphanumeric() || c == '-' || c == '.' || c == '_' || c == '~' {
+            out.push(c);
+        } else {
+            out.push('%');
+            out.push(digits[(b >> 4u8) as usize]);
+            out.push(digits[(b & 15u8) as usize]);
+        }
+    }
+    out.to_str()
+}
+
+/// The value of cookie `name`, or `""`.
+pub fn cookie(r: Request, name: str) -> str {
+    for part in r.header("cookie").split(";") {
+        if let p: (str, str) = part.trim().split_once("=") {
+            if p.0 == name { return p.1; }
+        }
+    }
+    ""
+}
+
+pub fn content_type(path: str) -> str {
+    let ext = match path.rfind(".") {
+        at: usize => path[at + 1:].to_lowercase(),
+        none => "",
+    };
+    match ext {
+        "html" => "text/html; charset=utf-8",
+        "css" => "text/css; charset=utf-8",
+        "js" | "mjs" => "text/javascript; charset=utf-8",
+        "json" => "application/json",
+        "xml" => "application/xml; charset=utf-8",
+        "wasm" => "application/wasm",
+        "txt" | "md" | "nabi" | "nabion" | "sh" | "ps1" => "text/plain; charset=utf-8",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "svg" => "image/svg+xml",
+        "webp" => "image/webp",
+        "ico" => "image/x-icon",
+        "woff2" => "font/woff2",
+        _ => "application/octet-stream",
+    }
+}
+
+/// The file under `root` that URL path `path` names, or none: decoded,
+/// no `..`, `.` files, backslashes or NUL; files only (never a listing).
+pub fn static_file(root: str, path: str) -> str | none {
+    let p = pct_decode(path, false)?;
+    if p.contains("\\") || p.contains("\u{0}") { return none; }
+    let segs: List<str> = List::new();
+    for s in p.split("/") {
+        if s.is_empty() { continue; }
+        if s.starts_with(".") { return none; }
+        segs.push(s);
+    }
+    if segs.is_empty() { return none; }
+    let full = root + "/" + segs.join("/");
+    let meta = try fs::metadata(full) catch _ { return none; };
+    if meta.is_file() { full } else { none }
+}
+
+/// The file a canonical path names: `<path>.html`, else the file itself
+/// (assets keep their names), else `<path>/index.html`. A path ending in
+/// `index` tries `<path>/index.html` first: `<dir>/index.html` is the
+/// directory's own page.
+pub fn page_file(root: str, path: str) -> str | none {
+    if path == "/" { return static_file(root, "/index.html"); }
+    if path.ends_with("/index") {
+        if let f: str = static_file(root, path + "/index.html") { return f; }
+    }
+    static_file(root, path + ".html") ?? static_file(root, path) ?? static_file(root, path + "/index.html")
+}
+
+/// Where browsers report what a page's CSP blocked: POST to the page's
+/// own site, so no CORS. A page sends REPORTING beside its CSP, and the
+/// CSP ends with REPORT_TO.
+pub const REPORT_PATH: str = "/_csp";
+pub const REPORTING: str = "Reporting-Endpoints: csp=\"/_csp\"";
+pub const REPORT_TO: str = "; report-uri /_csp; report-to csp";
+/// A report is a few hundred bytes; anything past this is not one.
+pub const MAX_REPORT: usize = 16384;
+
+/// One log line for the CSP violation in `body`, from report-uri
+/// (`{"csp-report": {..}}`) or the Reporting API (`[{"type":
+/// "csp-violation", "body": {..}}]`); none if it is neither.
+pub fn csp_report(body: str) -> str | none {
+    if body.len() > MAX_REPORT || (!body.contains("\"csp-report\"") && !body.contains("\"csp-violation\"")) { return none; }
+    let dir = json_str(body, ["effectiveDirective", "effective-directive", "violated-directive"]);
+    let blocked = json_str(body, ["blockedURL", "blocked-uri"]);
+    let page = json_str(body, ["documentURL", "document-uri"]);
+    let line = StrBuf::new();
+    for c in f"csp: {dir} blocked {blocked} on {page}".chars() {
+        if line.len() >= 400 { break; }
+        line.push(if c < ' ' || c == '\u{7f}' { '?' } else { c });
+    }
+    line.to_str()
+}
+
+/// The string value of the first of `names` in JSON text `j`, escapes
+/// left as written, or "-". Enough for a report; not a JSON parser.
+fn json_str(j: str, names: List<str>) -> str {
+    for n in names {
+        let k = "\"" + n + "\"";
+        let at = j.find(k) ?? continue;
+        let v = j[at + k.len():].trim_start().strip_prefix(":") ?? continue;
+        let s = v.trim_start().strip_prefix("\"") ?? continue;
+        let out = StrBuf::new();
+        let esc = false;
+        for c in s.chars() {
+            if !esc && c == '"' { return out.to_str(); }
+            esc = !esc && c == '\\';
+            out.push(c);
+        }
+    }
+    "-"
+}
+
+/// The speculation rules every site names in a Speculation-Rules header:
+/// fetch a same-site page when the pointer rests on its link (or it gets
+/// focus), so the click finds it ready. Prefetch only, never prerender,
+/// so no page runs before it is opened; never the API, `/_` or a sign-in
+/// or account path (packages.nabi-lang.org), whose GET has an effect or is private.
+pub const SPECULATION_PATH: str = "/speculation-rules.json";
+pub const SPECULATION: str = "Speculation-Rules: \"/speculation-rules.json\"";
+pub const SPECULATION_RULES: str = "{\"prefetch\":[{\"source\":\"document\",\"where\":{\"and\":[{\"href_matches\":\"/*\"},{\"not\":{\"href_matches\":\"/api/*\"}},{\"not\":{\"href_matches\":\"/_*\"}},{\"not\":{\"href_matches\":[\"/login\",\"/logout\",\"/auth/*\",\"/me\",\"/me/*\"]}},{\"not\":{\"selector_matches\":\"[download], [rel~=nofollow]\"}}]},\"eagerness\":\"moderate\"}]}\n";
+pub const SPECULATION_TYPE: str = "Content-Type: application/speculationrules+json";
+
+#[cfg(test)]
+fn expect(ok: bool, what: str) {
+    if !ok { panic(what); }
+}
+
+#[test]
+fn heads() {
+    let r = try parse_head("POST /api/v1/publish?x=1 HTTP/1.1\r\nHost: a\r\nContent-Length: 12\r\nX-A: 1\r\nx-a: 2") catch e { panic(e.msg); };
+    expect(r.method == "POST" && r.path == "/api/v1/publish" && r.query == "x=1", "line");
+    expect(r.header("host") == "a" && r.header("x-a") == "1, 2", "headers");
+    expect((try body_len(r) catch _ { 0usize }) == 12usize, "length");
+    let bad = |h: str| { try parse_head(h) catch e { return e.status; }; 0 };
+    expect(bad("GET / HTTP/1.1\r\nContent-Length: 1\r\nContent-Length: 2") == 400, "two lengths");
+    expect(bad("GET / HTTP/1.1\r\nTransfer-Encoding: chunked") == 501, "chunked");
+    expect(bad("GET http://x/ HTTP/1.1") == 400, "absolute form");
+    expect(bad("GET / HTTP/2") == 505, "version");
+    expect(bad("GET / HTTP/1.1\r\n folded") == 400, "obs-fold");
+    expect(bad("GET / HTTP/1.1\r\nBad Name: x") == 400, "header name");
+    expect(bad("GET /a b HTTP/1.1") == 400, "spaces");
+    let neg = try parse_head("POST / HTTP/1.1\r\nContent-Length: -1") catch e { panic(e.msg); };
+    expect((try body_len(neg) catch _ { 0usize }) == 0usize, "negative length rejected");
+}
+
+#[test]
+fn forms_and_paths() {
+    let f = form("name=my+token&csrf=a%2Fb&bad=%zz&name=again");
+    expect(f["name"] == "my token" && f["csrf"] == "a/b" && !f.contains_key("bad"), "form");
+    expect(pct_encode("a b/c~") == "a%20b%2Fc~", "encode");
+    expect((pct_decode("%4", false) ?? "x") == "x" && (pct_decode("%41", false) ?? "") == "A", "decode");
+    let r = try parse_head("GET / HTTP/1.1\r\nCookie: a=1; nct_session=abc; b=2") catch e { panic(e.msg); };
+    expect(cookie(r, "nct_session") == "abc" && cookie(r, "zz") == "", "cookie");
+    expect(content_type("x/a.CSS") == "text/css; charset=utf-8" && content_type("a") == "application/octet-stream" && content_type("sitemap.xml") == "application/xml; charset=utf-8", "types");
+    expect(content_type("install.sh") == "text/plain; charset=utf-8", "scripts as text");
+    expect(static_file("src", "/http.nabi") == "src/http.nabi", "file");
+    expect(static_file("src", "/../nabi.nabion") is none, "dotdot");
+    expect(static_file("src", "/%2e%2e/nabi.nabion") is none, "encoded dotdot");
+    expect(static_file("src", "/") is none, "no listing");
+    expect(static_file(".", "/src") is none, "no directories");
+    expect(static_file(".", "/.gitignore") is none, "dot files");
+    expect(page_file(".", "/nabi.nabion") == "./nabi.nabion", "an asset by its name");
+    expect(page_file(".", "/src") is none && page_file(".", "/") is none, "no index.html, no page");
+}
+
+#[test]
+fn caching() {
+    // SHA-256("abc") = ba7816bf8f01cfea414140de5dae2223...
+    expect(version("abc") == "ba7816bf8f" && etag("abc") == "\"ba7816bf8f01cfea\"", "fingerprints");
+    let bytes: List<u8> = [97u8, 98u8, 99u8];
+    expect(version(bytes) == version("abc") && version(bytes[0:3]) == version("abc"), "bytes and text agree");
+    expect(versioned("/nabi.css", "abc") == "/nabi.css?v=ba7816bf8f", "versioned");
+    expect(is_current("x=1&v=ba7816bf8f", "abc") && !is_current("v=0000000000", "abc") && !is_current("", "abc"), "current");
+    let tag = etag("abc");
+    let get = |inm: str| { try parse_head("GET /nabi.css HTTP/1.1\r\nIf-None-Match: " + inm) catch e { panic(e.msg); } };
+    expect(not_modified(get("\"x\", " + tag), tag) && not_modified(get("W/" + tag), tag) && not_modified(get("*"), tag), "matches");
+    expect(!not_modified(get("\"ba7816bf8f\""), tag), "another tag");
+    let post = try parse_head("POST / HTTP/1.1\r\nIf-None-Match: *") catch e { panic(e.msg); };
+    let plain = try parse_head("GET / HTTP/1.1") catch e { panic(e.msg); };
+    expect(!not_modified(post, tag) && !not_modified(plain, tag), "GET and HEAD with If-None-Match only");
+    expect(reason(304) == "Not Modified", "reason");
+}
+
+#[test]
+fn reports() {
+    let old = "{\"csp-report\":{\"document-uri\":\"https://nabi-lang.org/\",\"violated-directive\":\"style-src-attr\",\"blocked-uri\":\"inline\"}}";
+    expect(csp_report(old) == "csp: style-src-attr blocked inline on https://nabi-lang.org/", "report-uri");
+    let api = "[{\"type\":\"csp-violation\",\"body\":{\"documentURL\":\"https://x/a\\\"b\",\"effectiveDirective\":\"script-src-elem\",\"blockedURL\":\"https://evil/\\n\"}}]";
+    expect(csp_report(api) == "csp: script-src-elem blocked https://evil/\\n on https://x/a\\\"b", "Reporting API");
+    expect(csp_report("{\"csp-report\":{}}") == "csp: - blocked - on -", "empty");
+    expect(csp_report("hello") is none && csp_report("[{\"type\":\"deprecation\"}]") is none, "not a report");
+}
+
+/// A client that sends its head a byte at a time is cut off at
+/// HEAD_LIMIT, not kept for each read's own timeout.
+#[test]
+fn slow_heads() {
+    using l = try! std::net::tcp_listen("127.0.0.1:0") {
+        let addr = f"{try! l.local_addr()}";
+        let client = std::thread::spawn(|| {
+            let c = try! std::net::tcp_connect(addr);
+            for _ in 0..40 {
+                try c.write_all("G") catch _ { break; };
+                std::thread::sleep(Duration::ms(250));
+            }
+            try c.close() catch _ {};
+            0
+        });
+        let (s, _) = try! l.accept();
+        let t0 = Instant::now();
+        let status = try {
+            _ = read_request(s, MAX_BODY, Duration::secs(30));
+            200
+        } catch e { e.status };
+        let ms = t0.elapsed().as_ms();
+        try s.close() catch _ {};
+        _ = try client.join() catch _ { 0 };
+        expect(status == 408 && ms < HEAD_LIMIT.as_ms() + 1000i64, f"{status} after {ms} ms");
+    }
+}
