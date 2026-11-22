@@ -203,6 +203,9 @@ html.nb:not(.js) .ib.theme,html.nb:not(.js) .seg{display:none}
 .pal-q{display:flex;align-items:center;gap:10px;padding:0 10px 0 16px;border-bottom:1px solid var(--line);color:var(--ink-3)}
 .pal-q input{flex:1;min-width:0;height:52px;border:0;outline:0;background:transparent;color:var(--ink);font:inherit;font-size:16px}
 .pal-q input::-webkit-search-cancel-button{display:none}
+/* the field fills the bar: the bar shows its focus, not a ring around the field */
+.pal .pal-q input:focus,.pal .pal-q input:focus-visible{outline:0;box-shadow:none;border:0}
+.pal-q:focus-within{border-bottom-color:var(--acc)}
 .pal-x{display:flex;align-items:center;justify-content:center;min-width:32px;min-height:32px;padding:0;border:0;border-radius:var(--r);background:none;cursor:pointer}
 .pal-list{flex:1;min-height:0;overflow-y:auto;padding:4px}
 .pal-grp+.pal-grp{margin-top:4px;padding-top:4px;border-top:1px solid var(--line)}
