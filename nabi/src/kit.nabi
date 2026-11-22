@@ -30,6 +30,7 @@ pub fn files() -> List<File> {
         File { name: "theme.js", data: include_bytes!("../../js/theme.js") },
         File { name: "keys.js", data: include_bytes!("../../js/keys.js") },
         File { name: "copy.js", data: include_bytes!("../../js/copy.js") },
+        File { name: "palette.js", data: include_bytes!("../../js/palette.js") },
         File { name: "logo.svg", data: include_bytes!("../../assets/brand/logo.svg") },
         File { name: "favicon.ico", data: include_bytes!("../../assets/brand/favicon.ico") },
         File { name: "favicon.svg", data: include_bytes!("../../assets/brand/favicon.svg") },
@@ -48,8 +49,14 @@ pub fn files() -> List<File> {
 /// as `fonts/` beside nabi.css.
 pub const FONTS_DIR: str = "web/assets/fonts";
 
-/// Copy every file under `from` (FONTS_DIR) into `to` (`<out>/fonts`),
-/// making the directories; the names written, relative to `to`.
+/// The brand files nabi-lang.org/brand offers for download (the mark,
+/// the app icons, the wordmarks; SVG and PNG), in a site's checkout:
+/// files, not built in, published as `brand/` by copy_fonts.
+pub const BRAND_DIR: str = "web/assets/brand/download";
+
+/// Copy every file under `from` (FONTS_DIR, BRAND_DIR) into `to`
+/// (`<out>/fonts`, `<out>/brand`), making the directories; the names
+/// written, relative to `to`.
 pub fn copy_fonts(from: str, to: str) throws (IoError) -> List<str> {
     let names: List<str> = List::new();
     try for e in fs::walk(from) {
@@ -89,7 +96,7 @@ fn sources() {
 fn names() {
     let names: List<str> = List::new();
     for f in files() { names.push(f.name); }
-    assert(names.join(" ") == "nabi.css theme.js keys.js copy.js logo.svg favicon.ico favicon.svg apple-touch-icon.png icon-192.png icon-512.png icon-maskable-192.png icon-maskable-512.png site.webmanifest", names.join(" "));
+    assert(names.join(" ") == "nabi.css theme.js keys.js copy.js palette.js logo.svg favicon.ico favicon.svg apple-touch-icon.png icon-192.png icon-512.png icon-maskable-192.png icon-maskable-512.png site.webmanifest", names.join(" "));
     let logo = find("logo.svg") ?? panic("no logo.svg");
     assert(logo.data.len() == LOGO_SVG.len(), "logo");
     let css = find("nabi.css") ?? panic("no nabi.css");
@@ -111,5 +118,7 @@ fn webfonts() {
         if n.ends_with(".woff2") { assert(data[0] == 0x77u8 && data[1] == 0x4fu8 && data[2] == 0x46u8 && data[3] == 0x32u8, n); }
         if n.starts_with("pretendard/") { assert(css.contains(f"url(\"{n}\")"), n); }
     }
+    let brand = try copy_fonts("../assets/brand/download", "target/brand-test") catch e { panic(f"brand: {e}"); };
+    assert(brand.len() == 12 && brand.contains("nabi-mark.svg") && brand.contains("nabi-horizontal-dark.png"), f"{brand.len()} brand files");
     assert(NABI_CSS.contains("url(\"fonts/Geist-Variable.woff2\")") && NABI_CSS.contains("url(\"fonts/GeistMono-Variable.woff2\")"), "nabi.css faces");
 }
