@@ -211,6 +211,16 @@ pub const LICENSE: str = "MIT OR Apache-2.0";
 /// repository's, for the toolchain, the packages and the sites.
 pub const SECURITY: str = "https://github.com/nabi-lang/nabi/security/policy";
 
+/// When every site's security.txt stops being valid (RFC 9116 wants a year
+/// at most): renew before then (CI checks it is more than 30 days away).
+pub const SECURITY_EXPIRES: str = "2027-10-24T00:00:00.000Z";
+
+/// `/.well-known/security.txt` of the site at `base` (`https://nabi-lang.org`),
+/// the same on every Nabi site (RFC 9116).
+pub fn security_txt(base: str) -> str {
+    f"Contact: mailto:security@nabi-lang.org\nContact: {SECURITY}\nExpires: {SECURITY_EXPIRES}\nPreferred-Languages: en, ko\nCanonical: {base}/.well-known/security.txt\nPolicy: {SECURITY}\n"
+}
+
 /// A Copy button: copy.js puts `text` on the clipboard and says so.
 pub fn copy_button(text: str, ko: bool) -> str {
     let (label, name) = if ko { ("복사", "복사") } else { ("Copy", "Copy") };
@@ -241,15 +251,53 @@ pub struct Footer {
     pub release: str = "";
 }
 
+/// Where the shared footer's links go, from the page it is on: each a
+/// prefix ending in `/` (absolute, or relative on the docs and home
+/// pages, which link within their version).
+pub struct Links {
+    /// nabi-lang.org (`https://nabi-lang.org/`).
+    pub home: str;
+    /// A version's docs (`https://docs.nabi-lang.org/latest/`).
+    pub docs: str;
+    /// The docs host, for the packages' docs (`https://docs.nabi-lang.org/`).
+    pub docs_host: str;
+    pub registry: str;
+    pub playground: str;
+}
+
+/// The footer's link columns, the same on every Nabi site: Docs,
+/// Reference, Ecosystem and Project, in Korean if `ko`.
+pub fn site_cols(l: Links, ko: bool) -> List<(str, str)> {
+    let tr = |en: str, kr: str| if ko { kr } else { en };
+    let k = if ko { "ko/" } else { "" };
+    let gh = "https://github.com/nabi-lang";
+    let a = |href: str, text: str| f"<a href=\"{esc(href)}\">{text}</a>";
+    let d = |p: str| l.docs + k + p;
+    [
+        (tr("Docs", "문서"), a(d("learn"), tr("Guide", "가이드")) + a(d("examples"), tr("Examples", "예제")) + a(d("errors"), tr("Error codes", "에러 코드")) + a(l.docs_host + k + "packages", tr("Package docs", "패키지 문서"))),
+        (tr("Reference", "참조"), a(d("spec/refs-lang"), tr("Language spec", "언어 사양")) + a(d("std"), tr("Std library", "표준 라이브러리")) + a(d("spec/refs-lang/009-tools"), tr("Tools", "도구"))),
+        (tr("Ecosystem", "생태계"), a(l.playground + (if ko { "ko" } else { "" }), tr("Playground", "플레이그라운드")) + a(l.registry, tr("Packages", "패키지")) + a(d("learn/packages"), tr("Publishing", "패키지 공개")) + a(gh + "/nabi.vscode", "VS Code") + a(gh + "/nabi.vim", "Vim") + a(gh + "/nabi.zed", "Zed")),
+        (tr("Project", "프로젝트"), a(l.home + k + "news", tr("News", "소식")) + a(l.home + k + "roadmap", tr("Roadmap", "로드맵")) + a(l.home + k + "faq", "FAQ") + a(gh + "/nabi", "GitHub") + a(SECURITY, tr("Security", "보안")) + a(gh + "/nabi/blob/main/CODE_OF_CONDUCT.md", tr("Code of conduct", "행동 강령")) + a("mailto:contact@nabi-lang.org", tr("Contact", "연락처"))),
+    ]
+}
+
+/// The legal links every footer's bar ends with: one privacy notice and
+/// one set of terms for all of Nabi, on nabi-lang.org, and the registry's
+/// usage policy.
+pub fn legal_links(ko: bool) -> str {
+    let (k, privacy, terms, policy) = if ko { ("/ko", "개인정보 처리방침", "이용약관", "패키지 이용 정책") } else { ("", "Privacy", "Terms", "Package policy") };
+    f"<span class=\"legal\"><a href=\"https://nabi-lang.org{k}/privacy\">{privacy}</a><a href=\"https://nabi-lang.org{k}/terms\">{terms}</a><a href=\"https://packages.nabi-lang.org/policy\">{policy}</a></span>"
+}
+
 pub fn footer(f: Footer) -> str {
     let cols = StrBuf::new();
     for (title, links) in f.cols { cols.push_str(f"<div class=\"col\"><p class=\"t-label\">{esc(title)}</p>{links}</div>\n"); }
     let lang = if f.ko { "ko" } else { "en" };
     let made = if f.ko { MADE_BY_KO } else { MADE_BY };
     let (about_social, bar) = if f.release.is_empty() {
-        (SOCIAL, f"{f.before}{made}{f.after}")
+        (SOCIAL, f"{f.before}{made}{f.after}{legal_links(f.ko)}")
     } else {
-        ("", f"<span class=\"mono\">nabi {esc(f.release)}</span><span>{LICENSE}</span>{made}{f.after}{SOCIAL}")
+        ("", f"<span class=\"mono\">nabi {esc(f.release)}</span><span>{LICENSE}</span>{made}{f.after}{legal_links(f.ko)}{SOCIAL}")
     };
     let tag = if f.tagline.is_empty() { "" } else { f"<p>{esc(f.tagline)}</p>" };
     f"<footer class=\"foot\" lang=\"{lang}\">
@@ -297,6 +345,18 @@ fn pieces() {
     assert(fonts().contains("<link rel=\"preload\" href=\"/fonts/Geist-Variable.woff2\" as=\"font\" type=\"font/woff2\" crossorigin>") && fonts().contains("href=\"/fonts/pretendard.css\""), "fonts");
     let en = fonts_in("../", false);
     assert(en.contains("href=\"../fonts/GeistMono-Variable.woff2\"") && !en.contains("pretendard") && !en.contains("https:"), "fonts, english, self-hosted");
+}
+
+#[test]
+fn shared_footer_links() {
+    let l = Links { home: "https://nabi-lang.org/", docs: "https://docs.nabi-lang.org/latest/", docs_host: "https://docs.nabi-lang.org/", registry: "https://packages.nabi-lang.org/", playground: "https://playground.nabi-lang.org/" };
+    let en = site_cols(l, false);
+    let ko = site_cols(l, true);
+    assert(en.len() == 4 && en[0].1.contains("href=\"https://docs.nabi-lang.org/latest/learn\"") && en[0].1.contains("https://docs.nabi-lang.org/packages\""), "docs links");
+    assert(ko[0].1.contains("https://docs.nabi-lang.org/latest/ko/learn\"") && ko[3].1.contains("https://nabi-lang.org/ko/news\"") && ko[2].1.contains("https://playground.nabi-lang.org/ko\""), "korean links");
+    assert(legal_links(false).contains("https://nabi-lang.org/privacy") && legal_links(true).contains("https://nabi-lang.org/ko/terms"), "legal");
+    let foot = footer(Footer { home: "/", logo: "/nabi.svg", tagline: "", cols: en, sites: Sites { home: "/", docs: "", registry: "", playground: "", current: "home" } });
+    assert(foot.contains("class=\"legal\""), "legal in every footer");
 }
 
 #[test]

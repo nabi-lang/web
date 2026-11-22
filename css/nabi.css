@@ -176,6 +176,7 @@
 .ib.theme .sun,.nb.dk .ib.theme .moon{display:none}
 /* the language menu (chrome::lang_menu): the icon button opens a list of
    the page's languages by their own names, the current one checked */
+.foot .legal{display:inline-flex;gap:12px;flex-wrap:wrap}
 .lang-menu{position:relative}
 .lang-menu>summary{list-style:none}
 .lang-menu>summary::-webkit-details-marker{display:none}

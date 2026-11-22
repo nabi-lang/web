@@ -239,8 +239,14 @@ pub const REVALIDATE: str = "Cache-Control: no-cache";
 /// For pages, and anything else without a fingerprint, on a site behind
 /// a CDN that a deploy purges: a browser checks it on every load (a 304
 /// when it has not changed), so a deploy shows at once; the CDN keeps it
-/// a day, until the purge.
-pub const FRESH: str = "Cache-Control: public, max-age=0, must-revalidate, s-maxage=86400";
+/// a day, until the purge, and serves it a day more while the origin
+/// fails (no must-revalidate, which would forbid that).
+pub const FRESH: str = "Cache-Control: public, max-age=0, s-maxage=86400, stale-if-error=86400";
+
+/// The kit's webfonts (/fonts/): their names carry no version, and they
+/// change about never, so they are kept a year; a new font is a new file
+/// name (`Geist-Variable-2.woff2`), never new bytes under an old one.
+pub const FONTS: str = "Cache-Control: public, max-age=31536000, immutable";
 
 fn sha_hex<B: AsBytes>(data: B) -> str { hex::encode(HashAlgorithm::Sha256.digest(data)) }
 
@@ -358,6 +364,7 @@ pub fn content_type(path: str) -> str {
         "css" => "text/css; charset=utf-8",
         "js" | "mjs" => "text/javascript; charset=utf-8",
         "json" => "application/json",
+        "webmanifest" => "application/manifest+json",
         "xml" => "application/xml; charset=utf-8",
         "wasm" => "application/wasm",
         "txt" | "md" | "nabi" | "nabion" | "sh" | "ps1" => "text/plain; charset=utf-8",
@@ -373,14 +380,15 @@ pub fn content_type(path: str) -> str {
 }
 
 /// The file under `root` that URL path `path` names, or none: decoded,
-/// no `..`, `.` files, backslashes or NUL; files only (never a listing).
+/// no `..`, `.` files (but `/.well-known/`, RFC 8615), backslashes or
+/// NUL; files only (never a listing).
 pub fn static_file(root: str, path: str) -> str | none {
     let p = pct_decode(path, false)?;
     if p.contains("\\") || p.contains("\u{0}") { return none; }
     let segs: List<str> = List::new();
     for s in p.split("/") {
         if s.is_empty() { continue; }
-        if s.starts_with(".") { return none; }
+        if s.starts_with(".") && !(segs.is_empty() && s == ".well-known") { return none; }
         segs.push(s);
     }
     if segs.is_empty() { return none; }
@@ -494,6 +502,7 @@ fn forms_and_paths() {
     expect(static_file("src", "/") is none, "no listing");
     expect(static_file(".", "/src") is none, "no directories");
     expect(static_file(".", "/.gitignore") is none, "dot files");
+    expect(static_file(".", "/src/.well-known/x") is none && static_file(".", "/.well-known/../nabi.nabion") is none, "well-known only at the root");
     expect(page_file(".", "/nabi.nabion") == "./nabi.nabion", "an asset by its name");
     expect(page_file(".", "/src") is none && page_file(".", "/") is none, "no index.html, no page");
 }
