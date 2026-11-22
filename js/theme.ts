@@ -101,17 +101,20 @@ type Theme = "auto" | "light" | "dark";
     html.className = "nb lt js";
   }
 
-  // The language menu (chrome::lang_menu) is a <details>: Escape closes
-  // it and gives the focus back to its button, a click outside closes it.
+  // The header's menus are <details>: the language menu
+  // (chrome::lang_menu), the docs' version menu (.vers) and any
+  // details[data-menu]. Escape closes an open one and gives the focus back
+  // to its summary; a click outside closes it.
+  const MENUS = "details:is(.lang-menu, .vers, [data-menu])[open]";
   document.addEventListener("keydown", (ev) => {
     if (ev.key !== "Escape") return;
-    for (const d of document.querySelectorAll<HTMLDetailsElement>("details.lang-menu[open]")) {
+    for (const d of document.querySelectorAll<HTMLDetailsElement>(MENUS)) {
       d.open = false;
-      d.querySelector("summary")?.focus();
+      d.querySelector("summary")?.focus({ preventScroll: true });
     }
   });
   document.addEventListener("click", (ev) => {
-    for (const d of document.querySelectorAll<HTMLDetailsElement>("details.lang-menu[open]")) {
+    for (const d of document.querySelectorAll<HTMLDetailsElement>(MENUS)) {
       if (!d.contains(ev.target as Node | null)) d.open = false;
     }
   });

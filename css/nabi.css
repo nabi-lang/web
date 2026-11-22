@@ -218,6 +218,11 @@ html.nb:not(.js) .ib.theme,html.nb:not(.js) .seg{display:none}
 .pal-foot .kbd+.kbd{margin-left:2px}
 @media (max-width:767px){.pal{margin-top:16px;max-height:calc(100dvh - 32px)}.pal-foot{display:none}}
 
+/* the sticky header never covers what focus or a #link scrolls to
+   (WCAG 2.4.11): a header 60px tall and a margin; a site with more under
+   its header sets its own, which wins over this zero-specificity rule */
+:where(html){scroll-padding-top:76px}
+
 /* buttons, chips */
 .btn{display:inline-flex;align-items:center;gap:8px;background:var(--btn);color:var(--btn-ink)!important;font-size:15px;line-height:20px;font-weight:500;padding:11px 18px;border-radius:var(--r);border:0;text-decoration:none!important;cursor:pointer}
 .btn-2{display:inline-flex;align-items:center;gap:8px;color:var(--ink)!important;font-size:15px;line-height:20px;font-weight:500;padding:10px 17px;border:1px solid var(--line-2);border-radius:var(--r);background:var(--panel);text-decoration:none!important;cursor:pointer}
@@ -290,7 +295,7 @@ html.nb:not(.js) .ib.theme,html.nb:not(.js) .seg{display:none}
 .crumb.api-crumb .here{color:var(--acc);font-weight:600}
 .api-crumb .sep{color:var(--ink-3)}
 .api-kind{flex:none;padding:0 6px;border:1px solid var(--line-2);border-radius:var(--r);color:var(--ink-2);font-size:12px;line-height:18px;font-weight:500}
-.api-nav{--row:28px;--tw:20px;--step:9px;display:flex;flex-direction:column;min-width:0;font-size:14px;line-height:20px}
+.api-nav{--row:28px;--tw:24px;--step:9px;display:flex;flex-direction:column;min-width:0;font-size:14px;line-height:20px}
 .api-nav ul{list-style:none;margin:0;padding:0}
 .api-nav a,.api-nav li>span{display:flex;align-items:baseline;gap:8px;min-width:0;padding:calc((var(--row) - 20px)/2) 8px;border-radius:var(--r);color:var(--ink-2);font-family:var(--mono);font-size:13px;line-height:20px;overflow-wrap:anywhere}
 .api-nav a:hover{text-decoration:none;background:var(--bg-2);color:var(--ink)}

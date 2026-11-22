@@ -8,7 +8,7 @@ What nabi-lang.org, docs.nabi-lang.org, packages.nabi-lang.org and playground.na
 
 - `css/nabi.css`: tokens (plain light and dark blocks, so a theme is a class), type steps, font fallbacks, components, theme controls, footer
 - `docs/tokens.md`: how the tokens work, every token's role, values and contrast, the type scale, the theme contract and the rules
-- `js/theme.ts`: light and dark, loaded blocking in `<head>`: the class before the first paint, then the header toggle and the footer switch
+- `js/theme.ts`: light and dark, loaded blocking in `<head>`: the class before the first paint, then the header toggle and the footer switch; and the header's `<details>` menus (language, version, any `details[data-menu]`), which close on Escape, giving the focus back to their button, and on a click outside
 - `js/keys.ts`: Ctrl+K and Cmd+K open the search palette where the page has it, else focus the search field; `/` focuses the field (the palette where there is none)
 - `js/palette.tsx`: the search palette (`chrome::palette_button`, `chrome::palette_script`): a modal dialog over the docs of one version, the standard library, the packages and the examples, results grouped Docs / Std / Packages / Examples. It reads the docs' `search-index.json`, the package docs' `search-api.json` and the registry's `GET /api/v1/docs?format=json`, each once, when first needed
 - `js/copy.ts`: Copy buttons (`button[data-copy]`, `chrome::copy_button`)
@@ -46,6 +46,7 @@ cd nabi && nabi test                   # the library's tests
 
 - One type scale; tracking is set by size and never overridden.
 - Light and dark are designed separately; terminals and output follow the theme.
+- WCAG 2.2 AA: every control is at least 24 x 24 px, the sticky header never covers what focus scrolls to (`scroll-padding-top`), a menu closes on Escape and gives the focus back.
 - A site never keeps a copy of a file from here: it publishes the kit's.
 - No deploy or infrastructure details here: those live in the private infra repository.
 
