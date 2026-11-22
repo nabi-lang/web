@@ -1,6 +1,7 @@
 # Every commit of a pull request is signed off (CONTRIBUTING.md, Sign your
-# work).
-name: CI / DCO sign-off
+# work), the page scripts build and type-check, and the library's tests
+# pass.
+name: CI
 
 on:
   pull_request:
@@ -14,11 +15,37 @@ jobs:
     name: DCO
     uses: nabi-lang/.github/.github/workflows/reusable-dco.yml@v1.0.3
 
+  kit:
+    name: Build and test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      # kit.nabi builds the .js in, so the scripts come first.
+      - name: Page scripts
+        run: |
+          npm ci
+          npm run build
+          npm run check
+      - name: Install the toolchain
+        run: |
+          curl -fsSL https://nabi.sh | sh
+          echo "$HOME/.nabi/bin" >> "$GITHUB_PATH"
+      - name: Library tests
+        working-directory: nabi
+        run: nabi test
+
   # The one required check (rulesets/main.json): passes when every job
   # passed or was skipped.
   ci-gate:
     name: CI gate
-    needs: [dco]
+    needs: [dco, kit]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
