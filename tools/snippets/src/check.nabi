@@ -14,7 +14,9 @@ use std::process::{Child, Command, ExitStatus, Stdio};
 use std::thread;
 
 /// How long one `nabi` command may take.
-const LIMIT: Duration = Duration::secs(60);
+// Blocks run in parallel, so a big one (the interpreter example) can
+// take several times its own run on a busy runner.
+const LIMIT: Duration = Duration::secs(180);
 
 /// `cmd` leading a process group of its own, so the whole tree can go.
 #[cfg(target_family = "unix")]
