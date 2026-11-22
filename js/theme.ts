@@ -101,6 +101,21 @@ type Theme = "auto" | "light" | "dark";
     html.className = "nb lt js";
   }
 
+  // The language menu (chrome::lang_menu) is a <details>: Escape closes
+  // it and gives the focus back to its button, a click outside closes it.
+  document.addEventListener("keydown", (ev) => {
+    if (ev.key !== "Escape") return;
+    for (const d of document.querySelectorAll<HTMLDetailsElement>("details.lang-menu[open]")) {
+      d.open = false;
+      d.querySelector("summary")?.focus();
+    }
+  });
+  document.addEventListener("click", (ev) => {
+    for (const d of document.querySelectorAll<HTMLDetailsElement>("details.lang-menu[open]")) {
+      if (!d.contains(ev.target as Node | null)) d.open = false;
+    }
+  });
+
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", wire);
   else wire();
   media.addEventListener("change", apply);
