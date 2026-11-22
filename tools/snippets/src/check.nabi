@@ -39,8 +39,12 @@ fn kill_tree(child: Child) {
 /// Exit status of `tool args`, or `none` after `LIMIT`. Output goes to
 /// `dir/<name>.out` and `.err`.
 fn run(tool: str, args: List<str>, dir: str, name: str) throws -> bool | none {
+    // A page's code runs as on a reader's machine: in CI, `nabi` would
+    // refuse to add an official package the code uses ("added on first
+    // use"), and an empty `CI` is no CI.
     let child = try grouped(Command::new(tool))
         .args(args)
+        .env("CI", "")
         .stdin(Stdio::Null)
         .stdout(Stdio::File(try fs::File::create(f"{dir}/{name}.out")))
         .stderr(Stdio::File(try fs::File::create(f"{dir}/{name}.err")))
