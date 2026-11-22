@@ -8,7 +8,8 @@
 //     data-registry="https://packages.nabi-lang.org" defer></script>
 //
 // data-docs is a docs version's root (default: <body data-root>); its
-// search-index.json (ko/search-index.json on Korean pages) is read for
+// search-index.json (ko/search-index.json on Korean pages, zh-hans/ and
+// zh-hant/ on Chinese ones) is read for
 // names only: {p: [[title, url, ..]], h: [[page, heading, id, named,
 // kind, ..]]}, urls from that root. data-pkgdocs holds search-api.json,
 // every package's API in the same form, urls from there. The registry's
@@ -16,6 +17,7 @@
 // when the palette first needs it; one that fails only leaves its group
 // out. The other hosts must answer with Access-Control-Allow-Origin.
 import { render } from "preact";
+import { bare, dir, hanTerms, lang, weight, type Code } from "./lang/lang.ts";
 
 (() => {
   interface Index {
@@ -30,16 +32,31 @@ import { render } from "preact";
 
   const me = document.currentScript as HTMLScriptElement | null;
   const conf = me ? me.dataset : {};
-  const ko = document.documentElement.lang === "ko";
+  const here: Code = lang();
   const docs = conf.docs || document.body.dataset.root || "/";
   const pkgdocs = conf.pkgdocs || "";
   const registry = (conf.registry || "").replace(/\/$/, "");
 
-  const T = ko
-    ? { label: "Nabi 검색", ph: "문서, 표준 라이브러리, 패키지 검색", hint: "문서, 표준 라이브러리, 패키지, 예제를 한 번에 찾습니다.", none: "결과 없음", down: "검색할 수 없습니다. 잠시 후 다시 시도하세요.", found: (n: number) => `결과 ${n}개`, close: "닫기",
-        groups: { docs: "문서", std: "표준 라이브러리", pkgs: "패키지", examples: "예제" }, legend: [["↑ ↓", "이동"], ["↵", "열기"], ["esc", "닫기"]] as [string, string][], pkg: "패키지", official: "공식" }
-    : { label: "Search Nabi", ph: "Search docs, std and packages", hint: "Finds pages of the docs, items of the standard library, packages and examples.", none: "No results", down: "Search is unavailable right now.", found: (n: number) => (n === 1 ? "1 result" : `${n} results`), close: "Close",
-        groups: { docs: "Docs", std: "Std", pkgs: "Packages", examples: "Examples" }, legend: [["↑ ↓", "to move"], ["↵", "to open"], ["esc", "to close"]] as [string, string][], pkg: "package", official: "official" };
+  interface Strings {
+    label: string; ph: string; hint: string; none: string; down: string; found: (n: number) => string; close: string;
+    groups: Record<Group, string>; legend: [string, string][]; pkg: string; official: string;
+    /** API kinds by name; a kind not here shows as it is (`struct`). */
+    kinds: Record<string, string>;
+  }
+  const STRINGS: Record<Code, Strings> = {
+    en: { label: "Search Nabi", ph: "Search docs, std and packages", hint: "Finds pages of the docs, items of the standard library, packages and examples.", none: "No results", down: "Search is unavailable right now.", found: (n) => (n === 1 ? "1 result" : `${n} results`), close: "Close",
+      groups: { docs: "Docs", std: "Std", pkgs: "Packages", examples: "Examples" }, legend: [["↑ ↓", "to move"], ["↵", "to open"], ["esc", "to close"]], pkg: "package", official: "official", kinds: {} },
+    ko: { label: "Nabi 검색", ph: "문서, 표준 라이브러리, 패키지 검색", hint: "문서, 표준 라이브러리, 패키지, 예제를 한 번에 찾습니다.", none: "결과 없음", down: "검색할 수 없습니다. 잠시 후 다시 시도하세요.", found: (n) => `결과 ${n}개`, close: "닫기",
+      groups: { docs: "문서", std: "표준 라이브러리", pkgs: "패키지", examples: "예제" }, legend: [["↑ ↓", "이동"], ["↵", "열기"], ["esc", "닫기"]], pkg: "패키지", official: "공식",
+      kinds: { method: "메서드", fn: "함수", trait: "트레잇", type: "타입 별칭", const: "상수", static: "정적" } },
+    "zh-Hans": { label: "搜索 Nabi", ph: "搜索文档、标准库和包", hint: "一次搜索文档页面、标准库条目、包和示例。", none: "无结果", down: "暂时无法搜索，请稍后再试。", found: (n) => `${n} 个结果`, close: "关闭",
+      groups: { docs: "文档", std: "标准库", pkgs: "包", examples: "示例" }, legend: [["↑ ↓", "移动"], ["↵", "打开"], ["esc", "关闭"]], pkg: "包", official: "官方",
+      kinds: { method: "方法", fn: "函数", trait: "trait", type: "类型别名", const: "常量", static: "静态变量" } },
+    "zh-Hant": { label: "搜尋 Nabi", ph: "搜尋文件、標準函式庫和套件", hint: "一次搜尋文件頁面、標準函式庫項目、套件和範例。", none: "沒有結果", down: "目前無法搜尋，請稍後再試。", found: (n) => `${n} 筆結果`, close: "關閉",
+      groups: { docs: "文件", std: "標準函式庫", pkgs: "套件", examples: "範例" }, legend: [["↑ ↓", "移動"], ["↵", "開啟"], ["esc", "關閉"]], pkg: "套件", official: "官方",
+      kinds: { method: "方法", fn: "函式", trait: "trait", type: "型別別名", const: "常數", static: "靜態變數" } },
+  };
+  const T = STRINGS[here];
   const ORDER: Group[] = ["docs", "std", "pkgs", "examples"];
   const PER = 5;
   const KIND_ORDER: Record<string, number> = { struct: 0, enum: 0, trait: 0, type: 1, fn: 2, const: 3, static: 3, impl: 4, method: 5 };
@@ -60,7 +77,7 @@ import { render } from "preact";
     return out;
   };
   const docsGroup = (u: string, k: string): Group => {
-    const v = u.replace(/^ko\//, "");
+    const v = bare(u);
     if (k || v === "std" || v.startsWith("std/") || v.startsWith("spec/refs-standard-libraries")) return "std";
     if (v === "examples" || v.startsWith("examples/")) return "examples";
     return "docs";
@@ -68,7 +85,7 @@ import { render } from "preact";
 
   let docsIdx: Promise<Entry[]> | null = null;
   let pkgIdx: Promise<Entry[]> | null = null;
-  const loadDocs = (): Promise<Entry[]> => (docsIdx ??= json<Index>(docs + (ko ? "ko/" : "") + "search-index.json").then((d) => entries(d, docs, docsGroup)));
+  const loadDocs = (): Promise<Entry[]> => (docsIdx ??= json<Index>(docs + dir(here) + "search-index.json").then((d) => entries(d, docs, docsGroup)));
   // Packages: the registry's list, then each package's API; either alone
   // will do.
   const loadPkgs = (): Promise<Entry[]> => (pkgIdx ??= Promise.all([
@@ -101,12 +118,13 @@ import { render } from "preact";
     if (name.startsWith(q)) return 1;
     if (t.startsWith(q)) return 2;
     if (new RegExp("(^|[^\\p{L}\\p{N}_])" + esc(q), "u").test(t)) return 3;
-    if (q.length < 3) return -1;
+    if (weight(q) < 3) return -1;
     const hay = t + " " + e.p.toLowerCase();
     return terms.every((w) => hay.includes(w)) ? 4 : -1;
   };
   const pick = (all: Entry[], q: string): Entry[] => {
-    const terms = q.split(/\s+/).filter(Boolean);
+    // Chinese has no spaces: a Han run counts as its two-character pieces
+    const terms = q.split(/\s+/).filter(Boolean).flatMap(hanTerms);
     const hits: [number, number, number, Entry][] = [];
     for (const e of all) {
       const s = score(e, q, terms);
@@ -116,9 +134,7 @@ import { render } from "preact";
     return hits.map((h) => h[3]);
   };
 
-  const KIND: Record<string, string> = ko
-    ? { method: "메서드", fn: "함수", trait: "트레잇", type: "타입 별칭", const: "상수", static: "정적", package: T.pkg, official: T.official }
-    : { package: T.pkg, official: T.official };
+  const KIND: Record<string, string> = { ...T.kinds, package: T.pkg, official: T.official };
   const shown = (e: Entry): Shown => ({ t: e.t, u: e.u, note: e.p, tag: e.k ? KIND[e.k] || e.k : "" });
 
   interface View { q: string; groups: [Group, Shown[]][] | null; sel: number; busy: boolean }
@@ -204,7 +220,7 @@ import { render } from "preact";
     let docsOk = true;
     const d = loadDocs().then(fill, () => { docsOk = false; });
     // packages wait for a query of two letters or more
-    const p = query.length >= 2 ? loadPkgs().then((all) => { per.pkgs = pick(all, query).slice(0, PER).map(shown); }, () => {}) : Promise.resolve();
+    const p = weight(query) >= 2 ? loadPkgs().then((all) => { per.pkgs = pick(all, query).slice(0, PER).map(shown); }, () => {}) : Promise.resolve();
     await d;
     if (!docsOk && mine === asked) { view = { ...view, groups: null }; draw(); return; }
     show(true);

@@ -9,7 +9,17 @@
 // system setting. The cookie is set for the site's domain (.nabi-lang.org
 // on docs.nabi-lang.org), so the sites under one domain share it.
 
+import { lang, type Code } from "./lang/lang.ts";
+
 type Theme = "auto" | "light" | "dark";
+
+// The header toggle's title, the action it takes (chrome::Words).
+const TITLE: Record<Code, { dark: string; light: string }> = {
+  en: { dark: "Switch to dark theme", light: "Switch to light theme" },
+  ko: { dark: "다크 테마로 바꾸기", light: "라이트 테마로 바꾸기" },
+  "zh-Hans": { dark: "切换到深色主题", light: "切换到浅色主题" },
+  "zh-Hant": { dark: "切換為深色主題", light: "切換為淺色主題" },
+};
 
 (() => {
   const html = document.documentElement;
@@ -52,11 +62,11 @@ type Theme = "auto" | "light" | "dark";
     html.classList.toggle("dk", dark);
     html.classList.toggle("lt", !dark);
     tint(getComputedStyle(html).getPropertyValue("--bg").trim() || (dark ? BG.dark : BG.light));
-    const ko = html.lang === "ko";
+    const say = TITLE[lang()];
     for (const b of document.querySelectorAll("[data-theme-set]")) b.setAttribute("aria-pressed", b.getAttribute("data-theme-set") === t ? "true" : "false");
     for (const b of document.querySelectorAll<HTMLElement>(".ib.theme")) {
       b.setAttribute("aria-pressed", dark ? "true" : "false");
-      b.title = ko ? (dark ? "라이트 테마로 바꾸기" : "다크 테마로 바꾸기") : (dark ? "Switch to light theme" : "Switch to dark theme");
+      b.title = dark ? say.light : say.dark;
     }
   }
 
@@ -129,5 +139,4 @@ type Theme = "auto" | "light" | "dark";
   });
 })();
 
-// a module to the type checker; the bundle (tools/build.ts) drops it
-export {};
+// the import makes it a module; the bundle (tools/build.ts) is a script

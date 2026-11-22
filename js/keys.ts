@@ -5,7 +5,8 @@
 document.addEventListener("keydown", (ev) => {
   const key = ev.key || "";
   const typing = ev.target instanceof Element && ev.target.closest("input, textarea, select, [contenteditable]");
-  const slash = key === "/" && !typing && !ev.metaKey && !ev.ctrlKey && !ev.altKey;
+  // A Chinese IME types the key as "、".
+  const slash = (key === "/" || (key === "、" && ev.code === "Slash")) && !typing && !ev.metaKey && !ev.ctrlKey && !ev.altKey;
   // ev.code too: with Caps Lock or a Korean IME the key is "K" or "ㅏ".
   const k = (ev.code === "KeyK" || key.toLowerCase() === "k") && (ev.metaKey || ev.ctrlKey) && !ev.altKey && !ev.shiftKey;
   if (!slash && !k) return;

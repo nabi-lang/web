@@ -1,12 +1,14 @@
 // Copy buttons of the Nabi sites: a button with data-copy puts that text
 // on the clipboard, one with data-copy-from="<selector>" copies that
 // element's text as it is at click time. The button says "Copied" for a
-// moment (Korean pages: 복사됨), or how to copy by hand where the
+// moment (in the page's language), or how to copy by hand where the
 // clipboard is refused; a live region announces it. Load it with `defer`.
 //
 // It also gives the sites window.nabiResize(el, change): run change(), then
 // ease el's width and height from what they were to what they are now
 // (nabi.css motion), unless the reader asked for reduced motion.
+import { lang, type Code } from "./lang/lang.ts";
+
 (() => {
   const still = matchMedia("(prefers-reduced-motion: reduce)");
   const runs = new WeakMap<Element, Animation>();
@@ -36,10 +38,15 @@
   }
   window.nabiResize = resize;
 
-  const ko = document.documentElement.lang === "ko";
+  const SAY: Record<Code, { done: string; press: (k: string) => string }> = {
+    en: { done: "Copied", press: (k) => "Press " + k },
+    ko: { done: "복사됨", press: (k) => k + "를 누르세요" },
+    "zh-Hans": { done: "已复制", press: (k) => "请按 " + k },
+    "zh-Hant": { done: "已複製", press: (k) => "請按 " + k },
+  };
+  const t = SAY[lang()];
   function press(): string {
-    const k = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘C" : "Ctrl+C";
-    return ko ? k + "를 누르세요" : "Press " + k;
+    return t.press(/Mac|iPhone|iPad/.test(navigator.platform) ? "⌘C" : "Ctrl+C");
   }
   let live: HTMLSpanElement | undefined;
   function say(msg: string): void {
@@ -70,9 +77,8 @@
       }, 1600);
     };
     if (!navigator.clipboard) { done(press()); return; }
-    navigator.clipboard.writeText(text).then(() => done(ko ? "복사됨" : "Copied"), () => done(press()));
+    navigator.clipboard.writeText(text).then(() => done(t.done), () => done(press()));
   });
 })();
 
-// a module to the type checker; the bundle (tools/build.ts) drops it
-export {};
+// the import makes it a module; the bundle (tools/build.ts) is a script
