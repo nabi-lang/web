@@ -85,7 +85,10 @@ import { bare, dir, hanTerms, lang, weight, type Code } from "./lang/lang.ts";
 
   let docsIdx: Promise<Entry[]> | null = null;
   let pkgIdx: Promise<Entry[]> | null = null;
-  const loadDocs = (): Promise<Entry[]> => (docsIdx ??= json<Index>(docs + dir(here) + "search-index.json").then((d) => entries(d, docs, docsGroup)));
+  // A docs version from before a language has no index in it: English.
+  const loadDocs = (): Promise<Entry[]> => (docsIdx ??= json<Index>(docs + dir(here) + "search-index.json")
+    .catch((e: unknown) => (dir(here) ? json<Index>(docs + "search-index.json") : Promise.reject(e)))
+    .then((d) => entries(d, docs, docsGroup)));
   // Packages: the registry's list, then each package's API; either alone
   // will do.
   const loadPkgs = (): Promise<Entry[]> => (pkgIdx ??= Promise.all([
