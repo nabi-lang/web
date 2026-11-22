@@ -8,7 +8,8 @@
 /* local fonts sized to Geist's metrics, so text keeps its line breaks when
    the webfonts swap in: size-adjust is Geist's width over the local font's,
    Liberation matches Arial; Safari honours only size-adjust. Latin only:
-   other scripts fall through to the system (Pretendard under :lang(ko)) */
+   other scripts fall through to the system (Pretendard under :lang(ko),
+   the system's CJK faces under :lang(zh-Hans) and :lang(zh-Hant)) */
 @font-face{font-family:"Geist Fallback";src:local("Arial"),local("ArialMT"),local("Helvetica"),local("Liberation Sans");size-adjust:102.5%;ascent-override:98.05%;descent-override:28.78%;line-gap-override:0%;unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+2000-206F,U+20AC,U+2122}
 @font-face{font-family:"Geist Fallback";font-weight:600 700;src:local("Arial Bold"),local("Arial-BoldMT"),local("Helvetica Bold"),local("Liberation Sans Bold");size-adjust:100.8%;ascent-override:99.7%;descent-override:29.27%;line-gap-override:0%;unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+2000-206F,U+20AC,U+2122}
 @font-face{font-family:"Geist Fallback Roboto";src:local("Roboto"),local("Roboto Regular"),local("Roboto-Regular");size-adjust:103.4%;ascent-override:97.2%;descent-override:28.53%;line-gap-override:0%;unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+2000-206F,U+20AC,U+2122}
@@ -139,12 +140,24 @@
   --sans:"Geist","Geist Fallback","Geist Fallback Roboto","Pretendard Variable","Pretendard",system-ui,sans-serif;
   --mono:"Geist Mono","Geist Mono Fallback","Geist Mono Fallback Consolas","Pretendard Variable","Pretendard",ui-monospace,monospace;
   font-family:"Pretendard Variable","Pretendard","Geist",sans-serif;letter-spacing:-0.005em;line-height:1.75}
-/* code inside Korean text keeps the mono face, its tracking and its line
-   height (every element inherits :lang(ko), so each needs saying) */
-:lang(ko) :is(pre,code,kbd,samp,.mono,.kbd),:lang(ko) :is(pre,code) *{font-family:var(--mono);letter-spacing:0}
-:lang(ko) pre,:lang(ko) pre *{line-height:inherit}
-:lang(ko) .cb pre,:lang(ko) .pre{line-height:22px}
-:lang(ko) .term{line-height:21px}
+/* Chinese: the system's CJK faces after Geist (no webfont: a Han font is
+   megabytes), zh-Hans and zh-Hant each with their own glyph forms; no
+   tracking, Korean's leading, breaks between any two Han characters but
+   never before closing punctuation */
+:lang(zh-Hans){
+  --sans:"Geist","Geist Fallback","Geist Fallback Roboto","PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans SC","Source Han Sans SC",sans-serif;
+  --mono:"Geist Mono","Geist Mono Fallback","Geist Mono Fallback Consolas","PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans SC","Source Han Sans SC",ui-monospace,monospace}
+:lang(zh-Hant){
+  --sans:"Geist","Geist Fallback","Geist Fallback Roboto","PingFang TC","Microsoft JhengHei","Noto Sans TC","Source Han Sans TC",sans-serif;
+  --mono:"Geist Mono","Geist Mono Fallback","Geist Mono Fallback Consolas","PingFang TC","Microsoft JhengHei","Noto Sans TC","Source Han Sans TC",ui-monospace,monospace}
+:lang(zh-Hans),:lang(zh-Hant){font-family:var(--sans);letter-spacing:0;line-height:1.75;word-break:normal;line-break:strict}
+/* code inside Korean and Chinese text keeps the mono face, its tracking
+   and its line height (every element inherits :lang(), so each needs
+   saying) */
+:is(:lang(ko),:lang(zh-Hans),:lang(zh-Hant)) :is(pre,code,kbd,samp,.mono,.kbd),:is(:lang(ko),:lang(zh-Hans),:lang(zh-Hant)) :is(pre,code) *{font-family:var(--mono);letter-spacing:0}
+:is(:lang(ko),:lang(zh-Hans),:lang(zh-Hant)) pre,:is(:lang(ko),:lang(zh-Hans),:lang(zh-Hant)) pre *{line-height:inherit}
+:is(:lang(ko),:lang(zh-Hans),:lang(zh-Hant)) .cb pre,:is(:lang(ko),:lang(zh-Hans),:lang(zh-Hant)) .pre{line-height:22px}
+:is(:lang(ko),:lang(zh-Hans),:lang(zh-Hant)) .term{line-height:21px}
 .h1,.m0,h1,h2,h3,p,pre,ul,ol,dl,figure{margin:0}
 
 /* hidden but read out; the skip link shows on keyboard focus */

@@ -147,6 +147,8 @@ The Fallback families are local fonts (Arial or Helvetica, Roboto, Menlo, Consol
 
 Korean text (`:lang(ko)` or `.ko`) switches to Pretendard first, with a line height of 1.75 and tracking of -0.005em: Hangul needs more leading than Latin and looks loose at Geist's tracking. Under `:lang(ko)` both stacks also gain Pretendard Variable after Geist, so `var(--sans)` and `var(--mono)` render Hangul in it. Code inside Korean text (`pre`, `code`, `kbd`, `.mono` and everything in `pre` / `code`) keeps the mono face, no tracking and its own line height: 22px in code blocks, 21px in terminals. Pretendard is for Korean only: a Hangul word in an English page needs `lang="ko"` on its element to get it.
 
+Chinese text (`:lang(zh-Hans)`, `:lang(zh-Hant)`) has no webfont: a Han face is megabytes. Both stacks keep Geist (Geist Mono) first for Latin and then take the system's faces with the script's own glyph forms: `"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", "Source Han Sans SC"` for zh-Hans, `"PingFang TC", "Microsoft JhengHei", "Noto Sans TC", "Source Han Sans TC"` for zh-Hant. Chinese text has no tracking, Korean's line height of 1.75, `word-break: normal` and `line-break: strict` (no break before closing punctuation); code inside it keeps the mono face and its line height, as in Korean.
+
 ### Webfonts
 
 The kit hosts the fonts itself; no page asks Google Fonts or jsDelivr for anything. The files live in `assets/fonts/` here (`web/assets/fonts` in a site, `kit::FONTS_DIR`) and are published under `fonts/` beside `nabi.css`. They are not built into the program like `kit::files()`: 3 MB of `include_bytes!` makes nabic crawl. The public names:
@@ -159,7 +161,7 @@ The kit hosts the fonts itself; no page asks Google Fonts or jsDelivr for anythi
 | `fonts/pretendard/PretendardVariable.subset.N.woff2` | the 92 slices; a browser fetches only those its text needs | same |
 | `fonts/LICENSE-Geist.txt`, `fonts/LICENSE-Pretendard.txt` | the licences | |
 
-Every face is `font-display: swap`. `nabi.css` declares the two Geist faces with `url("fonts/...")`, which resolves against the stylesheet, so the fonts go wherever `nabi.css` goes. `pretendard.css` is a separate stylesheet (47 KB of ranges, too much for every English page). `chrome::fonts_in(root, ko)` writes the `<head>` lines: a `<link rel="preload" ... crossorigin>` for each Geist file and, when `ko`, the Pretendard stylesheet; pass the same `root` as `nabi.css`, so a preload and the stylesheet's request are one URL. `chrome::fonts()` is `fonts_in("/", true)`.
+Every face is `font-display: swap`. `nabi.css` declares the two Geist faces with `url("fonts/...")`, which resolves against the stylesheet, so the fonts go wherever `nabi.css` goes. `pretendard.css` is a separate stylesheet (47 KB of ranges, too much for every English page). `chrome::fonts_in(root, ko)` writes the `<head>` lines: a `<link rel="preload" ... crossorigin>` for each Geist file and, when `ko`, the Pretendard stylesheet; pass the same `root` as `nabi.css`, so a preload and the stylesheet's request are one URL. `chrome::fonts()` is `fonts_in("/", true)`; `chrome::fonts_for(root, l)` takes a `lang::Lang`, Pretendard for Korean only.
 
 A site serves them like this:
 

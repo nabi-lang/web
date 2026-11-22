@@ -1,0 +1,256 @@
+//! The languages the Nabi sites speak, and the kit's words in each.
+//! English is at a site's root; every other language has a directory of
+//! its own (`/ko/`, `/zh-hans/`, `/zh-hant/`) with the same paths below
+//! it.
+
+/// A language of the sites. zh-Hant is written as in Taiwan.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum Lang {
+    En,
+    Ko,
+    ZhHans,
+    ZhHant,
+}
+
+/// Every language, in the language menu's order.
+pub const ALL: [Lang; 4] = [Lang::En, Lang::Ko, Lang::ZhHans, Lang::ZhHant];
+
+impl Lang {
+    /// The BCP 47 tag, for `lang` and `hreflang`: `en`, `ko`, `zh-Hans`,
+    /// `zh-Hant`.
+    pub fn code(self) -> str {
+        match self {
+            Lang::En => "en",
+            Lang::Ko => "ko",
+            Lang::ZhHans => "zh-Hans",
+            Lang::ZhHant => "zh-Hant",
+        }
+    }
+
+    /// The language's directory under a site root, with its slash: `""`
+    /// for English, `ko/`, `zh-hans/`, `zh-hant/`.
+    pub fn dir(self) -> str {
+        match self {
+            Lang::En => "",
+            Lang::Ko => "ko/",
+            Lang::ZhHans => "zh-hans/",
+            Lang::ZhHant => "zh-hant/",
+        }
+    }
+
+    /// The directory without its slash: `""`, `ko`, `zh-hans`, `zh-hant`.
+    pub fn slug(self) -> str {
+        let d = self.dir();
+        d.trim_end_matches("/")
+    }
+
+    /// The language's name in itself, for the language menu.
+    pub fn name(self) -> str {
+        match self {
+            Lang::En => "English",
+            Lang::Ko => "한국어",
+            Lang::ZhHans => "简体中文",
+            Lang::ZhHant => "繁體中文",
+        }
+    }
+
+    /// og:locale.
+    pub fn og_locale(self) -> str {
+        match self {
+            Lang::En => "en_US",
+            Lang::Ko => "ko_KR",
+            Lang::ZhHans => "zh_CN",
+            Lang::ZhHant => "zh_TW",
+        }
+    }
+
+    pub fn is_en(self) -> bool { self == Lang::En }
+
+    /// The kit's words in this language.
+    pub fn words(self) -> Words {
+        match self {
+            Lang::En => EN,
+            Lang::Ko => KO,
+            Lang::ZhHans => ZH_HANS,
+            Lang::ZhHant => ZH_HANT,
+        }
+    }
+
+    /// `p`, a path from a site root without a language (`learn/x.html`),
+    /// in this language (`zh-hans/learn/x.html`).
+    pub fn path(self, p: str) -> str { self.dir() + p }
+}
+
+/// Korean if `ko`, else English: the old `ko: bool` arguments.
+pub fn of_ko(ko: bool) -> Lang { if ko { Lang::Ko } else { Lang::En } }
+
+/// The language of a tag or a directory name (`zh-Hans`, `zh-hans`,
+/// `ko`; any case), or none.
+pub fn of_code(c: str) -> Lang | none {
+    let t = c.to_lowercase();
+    for l in ALL {
+        if t == l.code().to_lowercase() { return l; }
+    }
+    none
+}
+
+/// The language of path `p` from a site root (`zh-hant/learn`,
+/// `/ko/download`; a leading `/` is fine) and the path without its
+/// directory (`learn`, `/download`). A path in no language's directory
+/// is English, as it is.
+pub fn split(p: str) -> (Lang, str) {
+    let abs = p.starts_with("/");
+    let q = if abs { p[1:] } else { p };
+    for l in ALL {
+        if l.is_en() { continue; }
+        let s = l.slug();
+        if q == s { return (l, if abs { "/" } else { "" }); }
+        if let rest: str = q.strip_prefix(l.dir()) { return (l, if abs { "/" + rest } else { rest }); }
+    }
+    (Lang::En, p)
+}
+
+/// The language of path `p` (split).
+pub fn of_path(p: str) -> Lang { split(p).0 }
+
+/// The kit's interface text in one language (Lang::words). Each field
+/// says where it shows.
+pub struct Words {
+    /// The header's theme button: its name, and its title as an action.
+    pub dark_theme: str;
+    pub to_dark: str;
+    pub to_light: str;
+    /// The language menu's name.
+    pub language: str;
+    /// The footer's theme switch.
+    pub theme: str;
+    pub system: str;
+    pub light: str;
+    pub dark: str;
+    /// The search palette's button.
+    pub search: str;
+    /// The bar of Nabi sites.
+    pub sites: str;
+    pub home: str;
+    pub docs: str;
+    pub packages: str;
+    pub playground: str;
+    /// Copy buttons.
+    pub copy: str;
+    pub copied: str;
+    /// The footer's columns (chrome::site_cols).
+    pub reference: str;
+    pub ecosystem: str;
+    pub project: str;
+    pub guide: str;
+    pub examples: str;
+    pub error_codes: str;
+    pub package_docs: str;
+    pub language_spec: str;
+    pub std_library: str;
+    pub tools: str;
+    pub publishing: str;
+    pub news: str;
+    pub releases: str;
+    pub roadmap: str;
+    pub faq: str;
+    pub community: str;
+    pub governance: str;
+    pub brand: str;
+    pub security: str;
+    pub contact: str;
+    /// The legal links (chrome::legal_links).
+    pub privacy: str;
+    pub terms: str;
+    pub package_policy: str;
+    /// The skip link, and a 404 page's title.
+    pub skip: str;
+    pub not_found: str;
+    /// The sentence after the brand in the footer: the slogan.
+    pub tagline: str;
+}
+
+pub const EN: Words = Words {
+    dark_theme: "Dark theme", to_dark: "Switch to dark theme", to_light: "Switch to light theme",
+    language: "Language",
+    theme: "Theme", system: "System", light: "Light", dark: "Dark",
+    search: "Search",
+    sites: "Nabi sites", home: "Home", docs: "Docs", packages: "Packages", playground: "Playground",
+    copy: "Copy", copied: "Copied",
+    reference: "Reference", ecosystem: "Ecosystem", project: "Project",
+    guide: "Guide", examples: "Examples", error_codes: "Error codes", package_docs: "Package docs",
+    language_spec: "Language spec", std_library: "Std library", tools: "Tools", publishing: "Publishing",
+    news: "News", releases: "Releases", roadmap: "Roadmap", faq: "FAQ", community: "Community",
+    governance: "Governance", brand: "Brand", security: "Security", contact: "Contact",
+    privacy: "Privacy", terms: "Terms", package_policy: "Package policy",
+    skip: "Skip to content", not_found: "Page not found",
+    tagline: "Clear rules, free as a butterfly.",
+};
+
+pub const KO: Words = Words {
+    dark_theme: "다크 테마", to_dark: "다크 테마로 바꾸기", to_light: "라이트 테마로 바꾸기",
+    language: "언어",
+    theme: "테마", system: "시스템", light: "라이트", dark: "다크",
+    search: "검색",
+    sites: "Nabi 사이트", home: "홈", docs: "문서", packages: "패키지", playground: "플레이그라운드",
+    copy: "복사", copied: "복사됨",
+    reference: "참조", ecosystem: "생태계", project: "프로젝트",
+    guide: "가이드", examples: "예제", error_codes: "에러 코드", package_docs: "패키지 문서",
+    language_spec: "언어 사양", std_library: "표준 라이브러리", tools: "도구", publishing: "패키지 공개",
+    news: "소식", releases: "릴리스", roadmap: "로드맵", faq: "FAQ", community: "커뮤니티",
+    governance: "운영", brand: "브랜드", security: "보안", contact: "연락처",
+    privacy: "개인정보 처리방침", terms: "이용약관", package_policy: "패키지 이용 정책",
+    skip: "본문으로 건너뛰기", not_found: "페이지를 찾을 수 없습니다",
+    tagline: "규칙은 분명하게, 나비처럼 자유롭게.",
+};
+
+pub const ZH_HANS: Words = Words {
+    dark_theme: "深色主题", to_dark: "切换到深色主题", to_light: "切换到浅色主题",
+    language: "语言",
+    theme: "主题", system: "跟随系统", light: "浅色", dark: "深色",
+    search: "搜索",
+    sites: "Nabi 站点", home: "首页", docs: "文档", packages: "包", playground: "演练场",
+    copy: "复制", copied: "已复制",
+    reference: "参考", ecosystem: "生态", project: "项目",
+    guide: "指南", examples: "示例", error_codes: "错误代码", package_docs: "包文档",
+    language_spec: "语言规范", std_library: "标准库", tools: "工具", publishing: "发布包",
+    news: "动态", releases: "版本发布", roadmap: "路线图", faq: "常见问题", community: "社区",
+    governance: "项目治理", brand: "品牌", security: "安全", contact: "联系我们",
+    privacy: "隐私政策", terms: "使用条款", package_policy: "包使用政策",
+    skip: "跳到正文", not_found: "找不到页面",
+    tagline: "规则清晰，如蝶般自由。",
+};
+
+pub const ZH_HANT: Words = Words {
+    dark_theme: "深色主題", to_dark: "切換為深色主題", to_light: "切換為淺色主題",
+    language: "語言",
+    theme: "主題", system: "跟隨系統", light: "淺色", dark: "深色",
+    search: "搜尋",
+    sites: "Nabi 網站", home: "首頁", docs: "文件", packages: "套件", playground: "演練場",
+    copy: "複製", copied: "已複製",
+    reference: "參考", ecosystem: "生態系", project: "專案",
+    guide: "指南", examples: "範例", error_codes: "錯誤代碼", package_docs: "套件文件",
+    language_spec: "語言規格", std_library: "標準函式庫", tools: "工具", publishing: "發布套件",
+    news: "最新消息", releases: "版本發布", roadmap: "路線圖", faq: "常見問題", community: "社群",
+    governance: "專案治理", brand: "品牌", security: "安全性", contact: "聯絡我們",
+    privacy: "隱私權政策", terms: "使用條款", package_policy: "套件使用政策",
+    skip: "跳至主要內容", not_found: "找不到頁面",
+    tagline: "規則清晰，如蝶般自由。",
+};
+
+#[test]
+fn languages() {
+    assert(Lang::ZhHans.code() == "zh-Hans" && Lang::ZhHant.dir() == "zh-hant/" && Lang::En.dir() == "" && Lang::Ko.slug() == "ko", "codes and directories");
+    assert(Lang::ZhHant.name() == "繁體中文" && Lang::ZhHans.og_locale() == "zh_CN" && Lang::ZhHant.og_locale() == "zh_TW", "names");
+    assert(of_code("zh-hans") is Lang && (of_code("ZH-HANT") ?? Lang::En) == Lang::ZhHant && of_code("fr") is none, "of_code");
+    let (l, rest) = split("zh-hant/learn/a.html");
+    assert(l == Lang::ZhHant && rest == "learn/a.html", rest);
+    let (l2, rest2) = split("/ko/download");
+    assert(l2 == Lang::Ko && rest2 == "/download", rest2);
+    let (l3, rest3) = split("/zh-hans");
+    assert(l3 == Lang::ZhHans && rest3 == "/", rest3);
+    let (l4, rest4) = split("kolkata/x");
+    assert(l4 == Lang::En && rest4 == "kolkata/x", "a directory that only starts like one");
+    assert(Lang::ZhHans.path("std/index.html") == "zh-hans/std/index.html" && of_ko(true) == Lang::Ko && of_path("learn") == Lang::En, "paths");
+    assert(Lang::Ko.words().to_dark == "다크 테마로 바꾸기" && Lang::ZhHant.words().packages == "套件" && Lang::ZhHans.words().packages == "包", "words");
+}

@@ -2,6 +2,11 @@
 //! theme.js drives, the social links, the bar of Nabi sites, the footer,
 //! and the <head> lines for fonts, icons and theme.js. Hrefs and text are
 //! escaped here; column links come as HTML.
+//!
+//! Each piece in a language has a `_for` form taking a lang::Lang; the
+//! forms taking `ko: bool` are those for English and Korean.
+
+use pkg::lang;
 
 /// HTML-escaped `s`, for text and attribute values.
 pub fn esc(s: str) -> str {
@@ -26,10 +31,14 @@ pub fn fonts() -> str { fonts_in("/", true) }
 /// fonts() from `root` (the same root as nabi.css, so a preload and the
 /// stylesheet's request are one URL); Pretendard's stylesheet only if
 /// the page holds Korean text (`ko`).
-pub fn fonts_in(root: str, ko: bool) -> str {
+pub fn fonts_in(root: str, ko: bool) -> str { fonts_for(root, lang::of_ko(ko)) }
+
+/// fonts_in for a page in `l`: Pretendard for Korean only. Chinese text
+/// takes the system's CJK faces (nabi.css), no webfont.
+pub fn fonts_for(root: str, l: lang::Lang) -> str {
     let b = StrBuf::new();
     for f in FONT_FILES { b.push_str(f"<link rel=\"preload\" href=\"{root}{f}\" as=\"font\" type=\"font/woff2\" crossorigin>\n"); }
-    if ko { b.push_str(f"<link rel=\"stylesheet\" href=\"{root}{PRETENDARD}\">\n"); }
+    if l == lang::Lang::Ko { b.push_str(f"<link rel=\"stylesheet\" href=\"{root}{PRETENDARD}\">\n"); }
     b.to_str()
 }
 
@@ -66,6 +75,9 @@ pub struct Head {
     pub extra: str = "";
     /// A Korean page: Pretendard too (fonts_in).
     pub ko: bool = false;
+    /// The page's language, over `ko`: its fonts and its og:locale (none:
+    /// no og:locale).
+    pub lang: lang::Lang | none = none;
 }
 
 /// `<head>` from the charset to the icons, theme.js blocking before the
@@ -75,6 +87,8 @@ pub fn head(h: Head) -> str {
     let alt = esc(h.alt);
     let canonical = if h.url.is_empty() { "" } else { f"<link rel=\"canonical\" href=\"{esc(h.url)}\">\n" };
     let og_url = if h.url.is_empty() { "" } else { f"<meta property=\"og:url\" content=\"{esc(h.url)}\">\n" };
+    let l = h.lang ?? lang::of_ko(h.ko);
+    let locale = if h.lang is none { "" } else { f"<meta property=\"og:locale\" content=\"{l.og_locale()}\">\n" };
     f"<meta charset=\"utf-8\">
 <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">
 <title>{esc(h.title)}</title>
@@ -83,7 +97,7 @@ pub fn head(h: Head) -> str {
 <script src=\"{(h.asset)("theme.js")}\"></script>
 <meta name=\"description\" content=\"{h.desc}\">
 {canonical}{h.extra}<meta property=\"og:type\" content=\"website\">
-<meta property=\"og:site_name\" content=\"{esc(h.site)}\">
+{locale}<meta property=\"og:site_name\" content=\"{esc(h.site)}\">
 <meta property=\"og:title\" content=\"{esc(h.title)}\">
 <meta property=\"og:description\" content=\"{h.desc}\">
 {og_url}<meta property=\"og:image\" content=\"{img}\">
@@ -94,7 +108,7 @@ pub fn head(h: Head) -> str {
 <meta name=\"twitter:card\" content=\"summary_large_image\">
 <meta name=\"twitter:image\" content=\"{img}\">
 <meta name=\"twitter:image:alt\" content=\"{alt}\">
-{fonts_in(h.root, h.ko)}<link rel=\"stylesheet\" href=\"{(h.asset)("nabi.css")}\">
+{fonts_for(h.root, l)}<link rel=\"stylesheet\" href=\"{(h.asset)("nabi.css")}\">
 <link rel=\"stylesheet\" href=\"{(h.asset)("style.css")}\">
 {icons(h.root)}"
 }
@@ -104,9 +118,11 @@ pub const ICON_THEME: str = "<svg class=\"moon\" width=\"16\" height=\"16\" view
 /// The header's theme button. Its name stays "Dark theme" and
 /// aria-pressed says whether it is on; theme.js keeps aria-pressed and
 /// the title (the action) in step.
-pub fn theme_button(ko: bool) -> str {
-    let (label, title) = if ko { ("다크 테마", "다크 테마로 바꾸기") } else { ("Dark theme", "Switch to dark theme") };
-    f"<button class=\"ib theme\" type=\"button\" aria-label=\"{label}\" aria-pressed=\"false\" title=\"{title}\">{ICON_THEME}</button>"
+pub fn theme_button(ko: bool) -> str { theme_button_for(lang::of_ko(ko)) }
+
+pub fn theme_button_for(l: lang::Lang) -> str {
+    let w = l.words();
+    f"<button class=\"ib theme\" type=\"button\" aria-label=\"{w.dark_theme}\" aria-pressed=\"false\" title=\"{w.to_dark}\">{ICON_THEME}</button>"
 }
 
 const ICON_GLOBE: str = "<svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" aria-hidden=\"true\"><circle cx=\"12\" cy=\"12\" r=\"9\"/><path d=\"M3 12h18M12 3c2.5 2.7 3.8 5.7 3.8 9s-1.3 6.3-3.8 9c-2.5-2.7-3.8-5.7-3.8-9S9.5 5.7 12 3z\"/></svg>";
@@ -114,10 +130,29 @@ const ICON_CHECK: str = "<svg class=\"ck\" width=\"14\" height=\"14\" viewBox=\"
 
 /// A language of a page in the language menu: its code, its name in
 /// itself (`한국어`), and the page in it; `href` `""` is the page shown.
+/// `sec` pairs the shown page's heading ids with those of the page in
+/// this language, `"a1 b1 a2 b2 .."`, for a script that carries the
+/// reader's section over (`data-sec` on the link).
 pub struct Lang {
     pub code: str;
     pub name: str;
     pub href: str = "";
+    pub sec: str = "";
+}
+
+/// The language menu's items for a page in `cur`: every language
+/// (lang::ALL), the page in it at `href(l)`; `""` leaves a language out.
+pub fn menu_items(cur: lang::Lang, href: fn(lang::Lang) -> str) -> List<Lang> {
+    let out: List<Lang> = List::new();
+    for l in lang::ALL {
+        if l == cur {
+            out.push(Lang { code: l.code(), name: l.name() });
+            continue;
+        }
+        let h = href(l);
+        if !h.is_empty() { out.push(Lang { code: l.code(), name: l.name(), href: h }); }
+    }
+    out
 }
 
 /// The header's language menu: an icon button beside the theme toggle,
@@ -125,23 +160,29 @@ pub struct Lang {
 /// checked. A `<details>`, so it opens and its links work without
 /// scripts; theme.js closes it on Escape and outside clicks. `attrs` go
 /// on the `<details>` (the docs' `class` and `data-sec`).
-pub fn lang_menu(ko: bool, langs: List<Lang>, attrs: str = "") -> str {
-    let label = if ko { "언어" } else { "Language" };
+pub fn lang_menu(ko: bool, langs: List<Lang>, attrs: str = "") -> str { lang_menu_for(lang::of_ko(ko), langs, attrs) }
+
+/// lang_menu on a page in `l`; menu_items lists every language.
+pub fn lang_menu_for(cur: lang::Lang, langs: List<Lang>, attrs: str = "") -> str {
+    let label = cur.words().language;
     let items = StrBuf::new();
     for l in langs {
         if l.href.is_empty() {
             items.push_str(f"<li><span aria-current=\"true\" lang=\"{esc(l.code)}\">{ICON_CHECK}{esc(l.name)}</span></li>");
         } else {
-            items.push_str(f"<li><a href=\"{esc(l.href)}\" hreflang=\"{esc(l.code)}\" lang=\"{esc(l.code)}\"><span class=\"ck\"></span>{esc(l.name)}</a></li>");
+            let sec = if l.sec.is_empty() { "" } else { f" data-sec=\"{esc(l.sec)}\"" };
+            items.push_str(f"<li><a href=\"{esc(l.href)}\" hreflang=\"{esc(l.code)}\" lang=\"{esc(l.code)}\"{sec}><span class=\"ck\"></span>{esc(l.name)}</a></li>");
         }
     }
     f"<details class=\"lang-menu\"{attrs}><summary class=\"ib\" aria-label=\"{label}\" title=\"{label}\">{ICON_GLOBE}</summary><ul class=\"lang-list\" aria-label=\"{label}\">{items.to_str()}</ul></details>"
 }
 
 /// The footer's System / Light / Dark switch.
-pub fn theme_seg(ko: bool) -> str {
-    let (lang, group, sys, light, dark) = if ko { ("ko", "테마", "시스템", "라이트", "다크") } else { ("en", "Theme", "System", "Light", "Dark") };
-    f"<span class=\"seg\" role=\"group\" aria-label=\"{group}\" lang=\"{lang}\"><button type=\"button\" data-theme-set=\"auto\" aria-pressed=\"false\">{sys}</button><button type=\"button\" data-theme-set=\"light\" aria-pressed=\"false\">{light}</button><button type=\"button\" data-theme-set=\"dark\" aria-pressed=\"false\">{dark}</button></span>"
+pub fn theme_seg(ko: bool) -> str { theme_seg_for(lang::of_ko(ko)) }
+
+pub fn theme_seg_for(l: lang::Lang) -> str {
+    let w = l.words();
+    f"<span class=\"seg\" role=\"group\" aria-label=\"{w.theme}\" lang=\"{l.code()}\"><button type=\"button\" data-theme-set=\"auto\" aria-pressed=\"false\">{w.system}</button><button type=\"button\" data-theme-set=\"light\" aria-pressed=\"false\">{w.light}</button><button type=\"button\" data-theme-set=\"dark\" aria-pressed=\"false\">{w.dark}</button></span>"
 }
 
 /// The project's Mastodon account: its link carries rel="me", so the
@@ -159,8 +200,10 @@ pub const DISCUSSIONS: str = "https://github.com/nabi-lang/nabi/discussions";
 /// The header's search palette button (js/palette.tsx), for a page with
 /// no search field of its own: palette.js opens on its click, and on
 /// Cmd+K or Ctrl+K anywhere (keys.js).
-pub fn palette_button(ko: bool) -> str {
-    let label = if ko { "검색" } else { "Search" };
+pub fn palette_button(ko: bool) -> str { palette_button_for(lang::of_ko(ko)) }
+
+pub fn palette_button_for(l: lang::Lang) -> str {
+    let label = l.words().search;
     f"<button class=\"ib pal-open\" type=\"button\" data-palette aria-label=\"{label}\" title=\"{label} (⌘K)\" aria-keyshortcuts=\"Control+K Meta+K\">{ICON_SEARCH}</button>"
 }
 
@@ -202,11 +245,14 @@ pub struct Sites {
 pub fn sites_nav(s: Sites) -> str { sites_nav_in(s, false) }
 
 /// sites_nav, in Korean if `ko`.
-pub fn sites_nav_in(s: Sites, ko: bool) -> str {
+pub fn sites_nav_in(s: Sites, ko: bool) -> str { sites_nav_for(s, lang::of_ko(ko)) }
+
+/// sites_nav in `l`.
+pub fn sites_nav_for(s: Sites, l: lang::Lang) -> str {
+    let w = l.words();
     let b = StrBuf::new();
-    b.push_str(if ko { "<nav aria-label=\"Nabi 사이트\">" } else { "<nav aria-label=\"Nabi sites\">" });
-    let names = if ko { ["홈", "문서", "패키지", "플레이그라운드"] } else { ["Home", "Docs", "Packages", "Playground"] };
-    for (key, text, href) in [("home", names[0], s.home), ("docs", names[1], s.docs), ("registry", names[2], s.registry), ("playground", names[3], s.playground)] {
+    b.push_str(f"<nav aria-label=\"{w.sites}\">");
+    for (key, text, href) in [("home", w.home, s.home), ("docs", w.docs, s.docs), ("registry", w.packages, s.registry), ("playground", w.playground, s.playground)] {
         let cur = if key == s.current { " aria-current=\"page\"" } else { "" };
         b.push_str(f"<a href=\"{esc(href)}\"{cur}>{text}</a>");
     }
@@ -216,8 +262,10 @@ pub fn sites_nav_in(s: Sites, ko: bool) -> str {
 
 /// The Nabi sites as header links (`.nav.sites`), the current one marked
 /// like any active header link.
-pub fn header_sites(s: Sites, ko: bool) -> str {
-    sites_nav_in(s, ko).replace("<nav aria-label=", "<nav class=\"nav sites\" aria-label=")
+pub fn header_sites(s: Sites, ko: bool) -> str { header_sites_for(s, lang::of_ko(ko)) }
+
+pub fn header_sites_for(s: Sites, l: lang::Lang) -> str {
+    sites_nav_for(s, l).replace("<nav aria-label=", "<nav class=\"nav sites\" aria-label=")
 }
 
 /// The body of a 404 page every Nabi site shares: a title, one plain
@@ -238,7 +286,8 @@ pub fn wordmark(label: str) -> str {
     f"{head} role=\"img\" aria-label=\"{esc(label)}\" height=\"28\"{body}"
 }
 
-/// The copyright notice every Nabi site carries (the same in Korean).
+/// The copyright notice every Nabi site carries (the same in every
+/// language).
 pub const MADE_BY: str = "<span>© 2026 <a href=\"https://daminstudio.com\">DaminStudio</a> and the Nabi contributors</span>";
 pub const MADE_BY_KO: str = MADE_BY;
 pub const LICENSE: str = "MIT OR Apache-2.0";
@@ -257,9 +306,11 @@ pub fn security_txt(base: str) -> str {
 }
 
 /// A Copy button: copy.js puts `text` on the clipboard and says so.
-pub fn copy_button(text: str, ko: bool) -> str {
-    let (label, name) = if ko { ("복사", "복사") } else { ("Copy", "Copy") };
-    f"<button type=\"button\" class=\"btn-2 btn-sm copy\" data-copy=\"{esc(text)}\" aria-label=\"{name}\">{label}</button>"
+pub fn copy_button(text: str, ko: bool) -> str { copy_button_for(text, lang::of_ko(ko)) }
+
+pub fn copy_button_for(text: str, l: lang::Lang) -> str {
+    let label = l.words().copy;
+    f"<button type=\"button\" class=\"btn-2 btn-sm copy\" data-copy=\"{esc(text)}\" aria-label=\"{label}\">{label}</button>"
 }
 
 /// The footer of nabi-lang.org, the docs and packages.nabi-lang.org.
@@ -279,6 +330,8 @@ pub struct Footer {
     /// Korean page: the theme switch, the sites and the bar speak Korean
     /// (the columns come as given).
     pub ko: bool = false;
+    /// The page's language, over `ko`.
+    pub lang: lang::Lang | none = none;
     /// The toolchain release. Set, the bar is the one every Nabi site
     /// shares: sites, `nabi <release>`, the licence, the copyright, `after`, the
     /// social links, the theme switch; `before` is then unused and the
@@ -302,47 +355,54 @@ pub struct Links {
 
 /// The footer's link columns, the same on every Nabi site: Docs,
 /// Reference, Ecosystem and Project, in Korean if `ko`.
-pub fn site_cols(l: Links, ko: bool) -> List<(str, str)> {
-    let tr = |en: str, kr: str| if ko { kr } else { en };
-    let k = if ko { "ko/" } else { "" };
+pub fn site_cols(l: Links, ko: bool) -> List<(str, str)> { site_cols_for(l, lang::of_ko(ko)) }
+
+/// site_cols in `lg`, each link to its page in that language (the
+/// registry has none).
+pub fn site_cols_for(l: Links, lg: lang::Lang) -> List<(str, str)> {
+    let w = lg.words();
+    let k = lg.dir();
     let gh = "https://github.com/nabi-lang";
     let a = |href: str, text: str| f"<a href=\"{esc(href)}\">{text}</a>";
     let d = |p: str| l.docs + k + p;
     [
-        (tr("Docs", "문서"), a(d("learn"), tr("Guide", "가이드")) + a(d("examples"), tr("Examples", "예제")) + a(d("errors"), tr("Error codes", "에러 코드")) + a(l.docs_host + k + "packages", tr("Package docs", "패키지 문서"))),
-        (tr("Reference", "참조"), a(d("spec/refs-lang"), tr("Language spec", "언어 사양")) + a(d("std"), tr("Std library", "표준 라이브러리")) + a(d("spec/refs-lang/009-tools"), tr("Tools", "도구"))),
-        (tr("Ecosystem", "생태계"), a(l.playground + (if ko { "ko" } else { "" }), tr("Playground", "플레이그라운드")) + a(l.registry, tr("Packages", "패키지")) + a(d("learn/packages"), tr("Publishing", "패키지 공개")) + a(gh + "/nabi.vscode", "VS Code") + a(gh + "/nabi.vim", "Vim") + a(gh + "/nabi.zed", "Zed")),
-        (tr("Project", "프로젝트"), a(l.home + k + "news", tr("News", "소식")) + a(l.home + k + "releases", tr("Releases", "릴리스")) + a(l.home + k + "roadmap", tr("Roadmap", "로드맵")) + a(l.home + k + "faq", "FAQ") + a(l.home + k + "community", tr("Community", "커뮤니티")) + a(l.home + k + "governance", tr("Governance", "운영")) + a(l.home + k + "brand", tr("Brand", "브랜드")) + a(gh + "/nabi", "GitHub") + a(SECURITY, tr("Security", "보안")) + a("mailto:contact@nabi-lang.org", tr("Contact", "연락처"))),
+        (w.docs, a(d("learn"), w.guide) + a(d("examples"), w.examples) + a(d("errors"), w.error_codes) + a(l.docs_host + k + "packages", w.package_docs)),
+        (w.reference, a(d("spec/refs-lang"), w.language_spec) + a(d("std"), w.std_library) + a(d("spec/refs-lang/009-tools"), w.tools)),
+        (w.ecosystem, a(l.playground + lg.slug(), w.playground) + a(l.registry, w.packages) + a(d("learn/packages"), w.publishing) + a(gh + "/nabi.vscode", "VS Code") + a(gh + "/nabi.vim", "Vim") + a(gh + "/nabi.zed", "Zed")),
+        (w.project, a(l.home + k + "news", w.news) + a(l.home + k + "releases", w.releases) + a(l.home + k + "roadmap", w.roadmap) + a(l.home + k + "faq", w.faq) + a(l.home + k + "community", w.community) + a(l.home + k + "governance", w.governance) + a(l.home + k + "brand", w.brand) + a(gh + "/nabi", "GitHub") + a(SECURITY, w.security) + a("mailto:contact@nabi-lang.org", w.contact)),
     ]
 }
 
 /// The legal links every footer's bar ends with: one privacy notice and
 /// one set of terms for all of Nabi, on nabi-lang.org, and the registry's
 /// usage policy.
-pub fn legal_links(ko: bool) -> str {
-    let (k, privacy, terms, policy) = if ko { ("/ko", "개인정보 처리방침", "이용약관", "패키지 이용 정책") } else { ("", "Privacy", "Terms", "Package policy") };
-    f"<span class=\"legal\"><a href=\"https://nabi-lang.org{k}/privacy\">{privacy}</a><a href=\"https://nabi-lang.org{k}/terms\">{terms}</a><a href=\"https://packages.nabi-lang.org/policy\">{policy}</a></span>"
+pub fn legal_links(ko: bool) -> str { legal_links_for(lang::of_ko(ko)) }
+
+pub fn legal_links_for(l: lang::Lang) -> str {
+    let w = l.words();
+    let k = if l.is_en() { "" } else { "/" + l.slug() };
+    f"<span class=\"legal\"><a href=\"https://nabi-lang.org{k}/privacy\">{w.privacy}</a><a href=\"https://nabi-lang.org{k}/terms\">{w.terms}</a><a href=\"https://packages.nabi-lang.org/policy\">{w.package_policy}</a></span>"
 }
 
 pub fn footer(f: Footer) -> str {
     let cols = StrBuf::new();
     for (title, links) in f.cols { cols.push_str(f"<div class=\"col\"><p class=\"t-label\">{esc(title)}</p>{links}</div>\n"); }
-    let lang = if f.ko { "ko" } else { "en" };
-    let made = if f.ko { MADE_BY_KO } else { MADE_BY };
+    let l = f.lang ?? lang::of_ko(f.ko);
+    let made = MADE_BY;
     let (about_social, bar) = if f.release.is_empty() {
-        (SOCIAL, f"{f.before}{made}{f.after}{legal_links(f.ko)}")
+        (SOCIAL, f"{f.before}{made}{f.after}{legal_links_for(l)}")
     } else {
-        ("", f"<span class=\"mono\">nabi {esc(f.release)}</span><span>{LICENSE}</span>{made}{f.after}{legal_links(f.ko)}{SOCIAL}")
+        ("", f"<span class=\"mono\">nabi {esc(f.release)}</span><span>{LICENSE}</span>{made}{f.after}{legal_links_for(l)}{SOCIAL}")
     };
     let tag = if f.tagline.is_empty() { "" } else { f"<p>{esc(f.tagline)}</p>" };
-    f"<footer class=\"foot\" lang=\"{lang}\">
+    f"<footer class=\"foot\" lang=\"{l.code()}\">
 <div class=\"frame cols\">
 <div class=\"about\"><a class=\"brand\" href=\"{esc(f.home)}\" lang=\"en\">{wordmark("Nabi")}</a>{tag}{about_social}</div>
 {cols.to_str()}</div>
 <div class=\"frame bar\">
-{sites_nav_in(f.sites, f.ko)}
+{sites_nav_for(f.sites, l)}
 {bar}
-{theme_seg(f.ko)}
+{theme_seg_for(l)}
 </div>
 </footer>
 "
@@ -421,4 +481,29 @@ fn footers() {
     assert(pb.contains("data-palette") && pb.contains("aria-label=\"검색\"") && pb.contains("class=\"ib pal-open\""), pb);
     let ps = palette_script("/palette.js?v=1", Palette { docs: "https://d/latest/", registry: "https://r" });
     assert(ps == "<script src=\"/palette.js?v=1\" data-docs=\"https://d/latest/\" data-registry=\"https://r\" defer></script>\n", ps);
+}
+
+#[test]
+fn chinese() {
+    let hans = lang::Lang::ZhHans;
+    let hant = lang::Lang::ZhHant;
+    assert(theme_button_for(hant).contains("aria-label=\"深色主題\"") && theme_seg_for(hans).contains("lang=\"zh-Hans\"") && theme_seg_for(hans).contains(">跟随系统</button>"), "theme");
+    assert(palette_button_for(hant).contains("aria-label=\"搜尋\"") && copy_button_for("x", hans).contains(">复制</button>"), "search, copy");
+    assert(!fonts_for("/", hans).contains("pretendard") && fonts_for("/", lang::Lang::Ko).contains("pretendard") && fonts_for("/", hant).contains("Geist-Variable"), "no webfont for Chinese");
+    let l = Links { home: "https://nabi-lang.org/", docs: "https://docs.nabi-lang.org/latest/", docs_host: "https://docs.nabi-lang.org/", registry: "https://packages.nabi-lang.org/", playground: "https://playground.nabi-lang.org/" };
+    let cols = site_cols_for(l, hant);
+    assert(cols[0].0 == "文件" && cols[0].1.contains("https://docs.nabi-lang.org/latest/zh-hant/learn\"") && cols[0].1.contains("https://docs.nabi-lang.org/zh-hant/packages\""), cols[0].1);
+    assert(cols[2].1.contains("https://playground.nabi-lang.org/zh-hant\"") && cols[3].1.contains("https://nabi-lang.org/zh-hant/news\""), "zh-Hant links");
+    assert(site_cols_for(l, hans)[1].1.contains(">标准库</a>") && legal_links_for(hans).contains("https://nabi-lang.org/zh-hans/privacy\">隐私政策</a>"), "zh-Hans");
+    assert(site_cols(l, true)[2].1 == site_cols_for(l, lang::Lang::Ko)[2].1 && legal_links(false) == legal_links_for(lang::Lang::En), "the bool forms");
+    let sites = Sites { home: "/", docs: "", registry: "", playground: "", current: "home" };
+    let f = footer(Footer { home: "/", logo: "/logo.svg", tagline: hans.words().tagline, cols: cols, sites: sites, release: "0.1.4", lang: hans });
+    assert(f.contains("<footer class=\"foot\" lang=\"zh-Hans\">") && f.contains(">首页</a>") && f.contains("aria-label=\"Nabi 站点\"") && f.contains("<p>规则清晰，如蝶般自由。</p>"), "footer");
+    let h = head(Head { title: "t", site: "s", desc: "d", img: "i", img_w: 1i64, img_h: 1i64, alt: "", asset: |n| n, lang: hant });
+    assert(h.contains("<meta property=\"og:locale\" content=\"zh_TW\">") && !h.contains("pretendard"), "head");
+    assert(!head(Head { title: "t", site: "s", desc: "d", img: "i", img_w: 1i64, img_h: 1i64, alt: "", asset: |n| n, ko: true }).contains("og:locale"), "no og:locale without a lang");
+    let items = menu_items(hans, |m| if m == lang::Lang::Ko { "" } else { "/" + m.dir() + "x" });
+    assert(items.len() == 3 && items[0].code == "en" && items[0].href == "/x" && items[1].href.is_empty() && items[2].href == "/zh-hant/x", "menu items");
+    let m = lang_menu_for(hans, [Lang { code: "en", name: "English", href: "/x", sec: "a b" }, Lang { code: "zh-Hans", name: "简体中文" }]);
+    assert(m.contains("aria-label=\"语言\"") && m.contains("<a href=\"/x\" hreflang=\"en\" lang=\"en\" data-sec=\"a b\">") && m.contains("<span aria-current=\"true\" lang=\"zh-Hans\">"), m);
 }
