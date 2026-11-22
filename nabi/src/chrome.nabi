@@ -337,6 +337,9 @@ pub struct Footer {
     /// social links, the theme switch; `before` is then unused and the
     /// social links leave the brand column.
     pub release: str = "";
+    /// The nabi-lang repository whose translation form the bar links to
+    /// on a Chinese page (legal_links_with); "" for none.
+    pub repo: str = "";
 }
 
 /// Where the shared footer's links go, from the page it is on: each a
@@ -378,10 +381,26 @@ pub fn site_cols_for(l: Links, lg: lang::Lang) -> List<(str, str)> {
 /// usage policy.
 pub fn legal_links(ko: bool) -> str { legal_links_for(lang::of_ko(ko)) }
 
-pub fn legal_links_for(l: lang::Lang) -> str {
+pub fn legal_links_for(l: lang::Lang) -> str { legal_links_with(l, "") }
+
+/// legal_links_for, and on a Chinese page a link that reports a
+/// translation problem in nabi-lang/`repo` (its translation.yml form);
+/// `repo` "" leaves it out. The Chinese text has had no native review.
+pub fn legal_links_with(l: lang::Lang, repo: str) -> str {
     let w = l.words();
     let k = if l.is_en() { "" } else { "/" + l.slug() };
-    f"<span class=\"legal\"><a href=\"https://nabi-lang.org{k}/privacy\">{w.privacy}</a><a href=\"https://nabi-lang.org{k}/terms\">{w.terms}</a><a href=\"https://packages.nabi-lang.org/policy\">{w.package_policy}</a></span>"
+    f"<span class=\"legal\"><a href=\"https://nabi-lang.org{k}/privacy\">{w.privacy}</a><a href=\"https://nabi-lang.org{k}/terms\">{w.terms}</a><a href=\"https://packages.nabi-lang.org/policy\">{w.package_policy}</a>{report_link(l, repo)}</span>"
+}
+
+/// The link to report a translation problem: Chinese pages only.
+pub fn report_link(l: lang::Lang, repo: str) -> str {
+    let text = match l {
+        lang::Lang::ZhHans => "反馈翻译问题",
+        lang::Lang::ZhHant => "回報翻譯問題",
+        _ => "",
+    };
+    if text.is_empty() || repo.is_empty() { return ""; }
+    f"<a href=\"https://github.com/nabi-lang/{esc(repo)}/issues/new?template=translation.yml\">{text}</a>"
 }
 
 pub fn footer(f: Footer) -> str {
@@ -390,9 +409,9 @@ pub fn footer(f: Footer) -> str {
     let l = f.lang ?? lang::of_ko(f.ko);
     let made = MADE_BY;
     let (about_social, bar) = if f.release.is_empty() {
-        (SOCIAL, f"{f.before}{made}{f.after}{legal_links_for(l)}")
+        (SOCIAL, f"{f.before}{made}{f.after}{legal_links_with(l, f.repo)}")
     } else {
-        ("", f"<span class=\"mono\">nabi {esc(f.release)}</span><span>{LICENSE}</span>{made}{f.after}{legal_links_for(l)}{SOCIAL}")
+        ("", f"<span class=\"mono\">nabi {esc(f.release)}</span><span>{LICENSE}</span>{made}{f.after}{legal_links_with(l, f.repo)}{SOCIAL}")
     };
     let tag = if f.tagline.is_empty() { "" } else { f"<p>{esc(f.tagline)}</p>" };
     f"<footer class=\"foot\" lang=\"{l.code()}\">
@@ -474,6 +493,9 @@ fn footers() {
     let g = footer(Footer { home: "/", logo: "/logo.svg", tagline: "t", cols: List::new(), sites: sites, release: "0.1.4", ko: true });
     assert(g.contains("<span class=\"mono\">nabi 0.1.4</span><span>MIT OR Apache-2.0</span><span>© 2026") && g.contains(">홈</a>"), "shared bar");
     assert(count(g, "class=\"social\"") == 1 && g.contains("<footer class=\"foot\" lang=\"ko\">"), "social once, korean");
+    let z = footer(Footer { home: "/", logo: "/logo.svg", tagline: "t", cols: List::new(), sites: sites, release: "0.1.4", lang: lang::Lang::ZhHant, repo: "docs" });
+    assert(z.contains("<a href=\"https://github.com/nabi-lang/docs/issues/new?template=translation.yml\">回報翻譯問題</a></span>"), "report link");
+    assert(!g.contains("translation.yml") && !legal_links_with(lang::Lang::ZhHans, "").contains("translation.yml"), "report link only on zh with a repo");
     assert(header_sites(sites, false).starts_with("<nav class=\"nav sites\""), "header sites");
     assert(not_found("Gone", "No page <code>x</code>.", [("/", "Home")]).contains("<li><a href=\"/\">Home</a></li>"), "404");
     assert(copy_button("a\"b", false).contains("data-copy=\"a&quot;b\""), "copy");
