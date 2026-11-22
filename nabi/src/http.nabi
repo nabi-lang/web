@@ -236,6 +236,12 @@ pub const IMMUTABLE: str = "Cache-Control: public, max-age=31536000, immutable";
 /// the ETag on every use.
 pub const REVALIDATE: str = "Cache-Control: no-cache";
 
+/// For pages, and anything else without a fingerprint, on a site behind
+/// a CDN that a deploy purges: a browser checks it on every load (a 304
+/// when it has not changed), so a deploy shows at once; the CDN keeps it
+/// a day, until the purge.
+pub const FRESH: str = "Cache-Control: public, max-age=0, must-revalidate, s-maxage=86400";
+
 fn sha_hex<B: AsBytes>(data: B) -> str { hex::encode(HashAlgorithm::Sha256.digest(data)) }
 
 /// The fingerprint of `data`: 10 hex digits of its SHA-256, for `?v=`.
