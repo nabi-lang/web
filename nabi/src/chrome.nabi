@@ -516,11 +516,11 @@ fn chinese() {
     let cols = site_cols_for(l, hant);
     assert(cols[0].0 == "文件" && cols[0].1.contains("https://docs.nabi-lang.org/latest/zh-hant/learn\"") && cols[0].1.contains("https://docs.nabi-lang.org/zh-hant/packages\""), cols[0].1);
     assert(cols[2].1.contains("https://playground.nabi-lang.org/zh-hant\"") && cols[3].1.contains("https://nabi-lang.org/zh-hant/news\""), "zh-Hant links");
-    assert(site_cols_for(l, hans)[1].1.contains(">标准库</a>") && legal_links_for(hans).contains("https://nabi-lang.org/zh-hans/privacy\">隐私政策</a>"), "zh-Hans");
+    assert(site_cols_for(l, hans)[1].1.contains(">标准库</a>") && legal_links_for(hans).contains("https://nabi-lang.org/zh-hans/privacy\">隐私声明</a>"), "zh-Hans");
     assert(site_cols(l, true)[2].1 == site_cols_for(l, lang::Lang::Ko)[2].1 && legal_links(false) == legal_links_for(lang::Lang::En), "the bool forms");
     let sites = Sites { home: "/", docs: "", registry: "", playground: "", current: "home" };
     let f = footer(Footer { home: "/", logo: "/logo.svg", tagline: hans.words().tagline, cols: cols, sites: sites, release: "0.1.4", lang: hans });
-    assert(f.contains("<footer class=\"foot\" lang=\"zh-Hans\">") && f.contains(">首页</a>") && f.contains("aria-label=\"Nabi 站点\"") && f.contains("<p>规则清晰，如蝶般自由。</p>"), "footer");
+    assert(f.contains("<footer class=\"foot\" lang=\"zh-Hans\">") && f.contains(">首页</a>") && f.contains("aria-label=\"Nabi 网站\"") && f.contains("<p>规则清晰，如蝶般自由。</p>"), "footer");
     let h = head(Head { title: "t", site: "s", desc: "d", img: "i", img_w: 1i64, img_h: 1i64, alt: "", asset: |n| n, lang: hant });
     assert(h.contains("<meta property=\"og:locale\" content=\"zh_TW\">") && !h.contains("pretendard"), "head");
     assert(!head(Head { title: "t", site: "s", desc: "d", img: "i", img_w: 1i64, img_h: 1i64, alt: "", asset: |n| n, ko: true }).contains("og:locale"), "no og:locale without a lang");
