@@ -48,12 +48,13 @@
   --note-bg:#eef4fa;
   --note-line:#c9dcec;
   --note-ink:#245e8f;
-  /* syntax: keyword, type, string, number, comment */
+  /* syntax: keyword, type, string, number, comment, function */
   --k:#93356a;
   --t:#245e8f;
   --s:#3a6a2c;
   --n:#8a5300;
   --c:#6b6268;
+  --f:#6a3fb5;
   /* nabic terminal colours, darkened on white so they pass contrast */
   --cli-sky:#245e8f;
   --cli-red:#b42a2a;
@@ -99,6 +100,7 @@
   --s:#a3d48a;
   --n:#e8b96a;
   --c:#958b90;
+  --f:#c3a6ff;
   --cli-sky:#7cc4ef;
   --cli-red:#ff7a7a;
   --cli-amber:#e8b96a;
@@ -135,6 +137,8 @@
 .mono{font-family:var(--mono);font-feature-settings:"zero","ss01"}
 .ic{font-family:var(--mono);font-size:.88em;background:var(--code);border:1px solid var(--line);padding:0 .3em;border-radius:var(--r)}
 .k{color:var(--k)}.t{color:var(--t)}.s{color:var(--s)}.n{color:var(--n)}.c{color:var(--c)}
+/* functions, and macros as the editors colour them */
+.f,.m{color:var(--f)}
 /* Pretendard only for Korean: its slices load when Hangul shows up */
 :lang(ko),.ko{
   --sans:"Geist","Geist Fallback","Geist Fallback Roboto","Pretendard Variable","Pretendard",system-ui,sans-serif;

@@ -47,7 +47,7 @@ A choice writes the cookie and `localStorage.theme` (System deletes both) and sw
 
 ## Colour
 
-The palette starts from the mark's four tones, #fbc6d9, #ec7fa9, #c9518a and #93356a, and the wordmark's ink, #1f1b1e on light and #faf7f8 on dark. The accent is whichever mark tone clears 4.5:1 on the ground; neutrals lean slightly toward the ink, never flat grey. The syntax hues (blue, green, amber) sit at a matching weight in each theme.
+The palette starts from the mark's four tones, #fbc6d9, #ec7fa9, #c9518a and #93356a, and the wordmark's ink, #1f1b1e on light and #faf7f8 on dark. The accent is whichever mark tone clears 4.5:1 on the ground; neutrals lean slightly toward the ink, never flat grey. The syntax hues (blue, green, amber, violet) sit at a matching weight in each theme.
 
 ### Roles
 
@@ -104,6 +104,7 @@ The hex that `nabi.css` ships; text and control colours carry their contrast on 
 | `--s` | #3a6a2c (6.2:1) | #a3d48a (11.0:1) |
 | `--n` | #8a5300 (6.1:1) | #e8b96a (10.3:1) |
 | `--c` | #6b6268 (5.7:1) | #958b90 (5.7:1) |
+| `--f` | #6a3fb5 (6.8:1) | #c3a6ff (9.1:1) |
 | `--cli-sky` | #245e8f (6.6:1) | #7cc4ef (9.8:1) |
 | `--cli-red` | #b42a2a (6.2:1) | #ff7a7a (7.4:1) |
 | `--cli-amber` | #8a5300 (6.1:1) | #e8b96a (10.3:1) |
@@ -112,7 +113,7 @@ The hex that `nabi.css` ships; text and control colours carry their contrast on 
 
 ## Syntax and terminal colours
 
-Code highlighting uses five tokens, matching the classes the `nabi-syntax` package emits:
+Code highlighting uses six tokens, matching the classes the `nabi-syntax` package emits:
 
 | Class | Token | Tokens it covers |
 |---|---|---|
@@ -121,6 +122,7 @@ Code highlighting uses five tokens, matching the classes the `nabi-syntax` packa
 | `.s` | `--s` | strings and f-strings |
 | `.n` | `--n` | numbers |
 | `.c` | `--c` | comments |
+| `.f`, `.m` | `--f` | function names where declared and called (`fn add`, `f(x)`, `x.len()`), and macros (`log!`, `@x`), as the editors colour them |
 
 `--k` equals `--acc` and `--t` equals `--link`, so code and prose share one palette.
 
